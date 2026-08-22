@@ -1,0 +1,68 @@
+{% extends ea is defined and ea is not null ? ea.templatePath('layout') : '@EasyAdmin/page/content.html.twig' %}
+
+{% block content_title %}{{ dateDisplayString }}{% endblock %}
+
+{% block page_actions %}
+    {% if ea is not null %}
+        <div class="btn-group me-2" role="group">
+            <a href="{{ path('admin_steps', {date: prevDate, view: currentView}) }}" class="btn btn-secondary">
+                <i class="fa fa-chevron-left"></i>
+            </a>
+            <input type="date" value="{{ currentDate }}"
+                   class="btn btn-secondary text-white"
+                   onchange="window.location.href='{{ path('admin_steps', {view: currentView}) }}&date=' + this.value"
+                   style="border-radius: 0; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1);">
+            <a href="{{ path('admin_steps', {date: nextDate, view: currentView}) }}" class="btn btn-secondary">
+                <i class="fa fa-chevron-right"></i>
+            </a>
+        </div>
+
+        <div class="btn-group" role="group">
+            <a href="{{ path('admin_steps', {date: currentDate, view: 'D'}) }}"
+               class="btn {{ currentView == 'D' ? 'btn-primary' : 'btn-secondary' }}">D</a>
+            <a href="{{ path('admin_steps', {date: currentDate, view: 'W'}) }}"
+               class="btn {{ currentView == 'W' ? 'btn-primary' : 'btn-secondary' }}">W</a>
+            <a href="{{ path('admin_steps', {date: currentDate, view: 'M'}) }}"
+               class="btn {{ currentView == 'M' ? 'btn-primary' : 'btn-secondary' }}">M</a>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block main %}
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Total Steps</div>
+                <div class="h2">{{ metrics.total|number_format }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Avg / Interval</div>
+                <div class="h2">{{ metrics.hourly_avg }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Max Burst</div>
+                <div class="h2">{{ metrics.max_burst }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card card-body">
+        <div class="h5 text-muted mb-3">Steps Distribution</div>
+        <div style="height: 400px; position: relative;">
+            <canvas id="stepsChart"></canvas>
+            {% if chartData is empty %}
+                <div class="position-absolute top-50 start-50 translate-middle text-muted">
+                    No data available for this period.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script id="chart-data" type="application/json">
+        {{ chartData|json_encode|raw }}
+    </script>
+{% endblock %}

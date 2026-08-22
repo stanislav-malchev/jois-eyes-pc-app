@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=../vendor/symfony/dependency-injection/Loader/schema/services.schema.json
+
+# This file is the entry point to configure your own services.
+# Files in the packages/ subdirectory configure your dependencies.
+# See also https://symfony.com/doc/current/service_container/import.html
+
+# Put parameters here that don't need to change on each machine where the app is deployed
+# https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
+parameters:
+    app.home_latitude: '%env(float:HOME_LATITUDE)%'
+    app.home_longitude: '%env(float:HOME_LONGITUDE)%'
+
+services:
+    # default configuration for services in *this* file
+    _defaults:
+        autowire: true      # Automatically injects dependencies in your services.
+        autoconfigure: true # Automatically registers your services as commands, event subscribers, etc.
+
+    # makes classes in src/ available to be used as services
+    # this creates a service per class whose id is the fully-qualified class name
+    App\:
+        resource: '../src/'
+
+    # add more service definitions when explicit configuration is needed
+    # please note that last definitions always *replace* previous ones
+
+    # MCP tools are resolved by class name at runtime (KLP\KlpMcpServer\Services\ToolService\ToolRepository),
+    # not wired in via a constructor Reference — mark them public so the container doesn't optimize them away.
+    App\MCP\Tools\DailyVitalsSummaryTool:
+        public: true
+
+    App\MCP\Tools\LocationContextTool:
+        public: true
+        arguments:
+            $homeLatitude: '%app.home_latitude%'
+            $homeLongitude: '%app.home_longitude%'
+
+    App\MCP\Tools\GetLastLocationTool:
+        public: true
+
+    App\MCP\Tools\GetLastHeartRateTool:
+        public: true
+
+    App\MCP\Tools\GetLastDayStepsTool:
+        public: true
+
+    App\MCP\Tools\GetLastNightSleepTool:
+        public: true
+
+    App\MCP\Tools\GetCurrentPlaceTool:
+        public: true

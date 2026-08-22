@@ -1,0 +1,72 @@
+{% extends '@EasyAdmin/page/content.html.twig' %}
+
+{% block content_title %}Dashboard{% endblock %}
+
+{% block main %}
+    <style>
+        .jo-stats { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
+        .jo-stat { border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; min-width: 160px; flex: 1; }
+        .jo-stat .jo-stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+        .jo-stat .jo-stat-label { color: #64748b; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+        .jo-breakdowns { display: flex; flex-wrap: wrap; gap: 16px; }
+        .jo-breakdown { border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; flex: 1; min-width: 280px; }
+        .jo-breakdown h3 { margin: 0 0 12px; font-size: 15px; }
+        .jo-breakdown table { width: 100%; border-collapse: collapse; }
+        .jo-breakdown td { padding: 4px 0; border-top: 1px solid #f1f5f9; }
+        .jo-breakdown td.jo-count { text-align: right; font-weight: 600; }
+        .jo-empty { color: #94a3b8; font-style: italic; }
+    </style>
+
+    <div class="jo-stats">
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ totalRecords }}</div>
+            <div class="jo-stat-label">Total records</div>
+        </div>
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ last24h }}</div>
+            <div class="jo-stat-label">Received last 24h</div>
+        </div>
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ deletedRecords }}</div>
+            <div class="jo-stat-label">Tombstoned</div>
+        </div>
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ latestReceivedAt ? latestReceivedAt|date('Y-m-d H:i', 'Europe/Sofia') : '—' }}</div>
+            <div class="jo-stat-label">Last sync received</div>
+        </div>
+    </div>
+
+    <div class="jo-breakdowns">
+        <div class="jo-breakdown">
+            <h3>By source</h3>
+            {% if bySource is empty %}
+                <p class="jo-empty">No records yet.</p>
+            {% else %}
+                <table>
+                    {% for row in bySource %}
+                        <tr>
+                            <td>{{ row.value }}</td>
+                            <td class="jo-count">{{ row.count }}</td>
+                        </tr>
+                    {% endfor %}
+                </table>
+            {% endif %}
+        </div>
+
+        <div class="jo-breakdown">
+            <h3>By type</h3>
+            {% if byType is empty %}
+                <p class="jo-empty">No records yet.</p>
+            {% else %}
+                <table>
+                    {% for row in byType %}
+                        <tr>
+                            <td>{{ row.value }}</td>
+                            <td class="jo-count">{{ row.count }}</td>
+                        </tr>
+                    {% endfor %}
+                </table>
+            {% endif %}
+        </div>
+    </div>
+{% endblock %}

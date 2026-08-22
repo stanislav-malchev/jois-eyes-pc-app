@@ -1,0 +1,38 @@
+klp_mcp_server:
+    enabled: true
+
+    server:
+        name: 'JoisEyes MCP Server'
+        version: '0.1.0'
+
+    default_path: 'mcp'
+
+    ping:
+        enabled: true
+        interval: 30
+
+    server_providers: ['streamable_http', 'sse']
+
+    # No Redis on this box (see CLAUDE.md — SQLite is the only "database
+    # service" here); the cache adapter uses the app's existing Symfony
+    # cache pool instead.
+    sse_adapter: 'cache'
+    adapters:
+        cache:
+            prefix: 'mcp_sse_'
+            ttl: 100
+
+    tools:
+        - App\MCP\Tools\DailyVitalsSummaryTool
+        - App\MCP\Tools\LocationContextTool
+        - App\MCP\Tools\GetLastLocationTool
+        - App\MCP\Tools\GetLastHeartRateTool
+        - App\MCP\Tools\GetLastDayStepsTool
+        - App\MCP\Tools\GetLastNightSleepTool
+        - App\MCP\Tools\GetCurrentPlaceTool
+
+    prompts: []
+
+    resources: []
+
+    resources_templates: []

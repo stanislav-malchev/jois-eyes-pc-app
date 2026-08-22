@@ -1,0 +1,24 @@
+
+###> symfony/framework-bundle ###
+/.env.local
+/.env.local.php
+/.env.*.local
+/config/secrets/prod/prod.decrypt.private.php
+/public/bundles/
+/var/
+/vendor/
+###< symfony/framework-bundle ###
+
+###> phpunit/phpunit ###
+/phpunit.xml
+/.phpunit.cache/
+###< phpunit/phpunit ###
+
+###> local ###
+# IDE project config (PhpStorm) — local paths, deployment target names, etc.
+/.idea/
+# PhpStorm-generated Symfony config autocomplete stub — not source, huge, no reason to ship it
+/config/reference.php
+# Personal Xiaomi/Mi Fitness export used for the historical data import — never meant to be tracked
+/input/
+###< local ###

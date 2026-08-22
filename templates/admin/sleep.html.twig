@@ -1,0 +1,101 @@
+{% extends ea is defined and ea is not null ? ea.templatePath('layout') : '@EasyAdmin/page/content.html.twig' %}
+
+{% block content_title %}{{ dateDisplayString }}{% endblock %}
+
+{% block page_actions %}
+    {% if ea is not null %}
+        <div class="btn-group me-2" role="group">
+            <a href="{{ path('admin_sleep', {date: prevDate, view: currentView}) }}" class="btn btn-secondary">
+                <i class="fa fa-chevron-left"></i>
+            </a>
+            <input type="date" value="{{ currentDate }}"
+                   class="btn btn-secondary text-white"
+                   onchange="window.location.href='{{ path('admin_sleep', {view: currentView}) }}&date=' + this.value"
+                   style="border-radius: 0; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1);">
+            <a href="{{ path('admin_sleep', {date: nextDate, view: currentView}) }}" class="btn btn-secondary">
+                <i class="fa fa-chevron-right"></i>
+            </a>
+        </div>
+
+        <div class="btn-group" role="group">
+            <a href="{{ path('admin_sleep', {date: currentDate, view: 'D'}) }}"
+               class="btn {{ currentView == 'D' ? 'btn-primary' : 'btn-secondary' }}">D</a>
+            <a href="{{ path('admin_sleep', {date: currentDate, view: 'W'}) }}"
+               class="btn {{ currentView == 'W' ? 'btn-primary' : 'btn-secondary' }}">W</a>
+            <a href="{{ path('admin_sleep', {date: currentDate, view: 'M'}) }}"
+               class="btn {{ currentView == 'M' ? 'btn-primary' : 'btn-secondary' }}">M</a>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block main %}
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Total Sleep</div>
+                <div class="h2">{{ (metrics.totalDuration / 3600)|round(1) }} <small>hrs</small></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Deep Sleep</div>
+                <div class="h2">{{ (metrics.deepSleep / 3600)|round(1) }} <small>hrs</small></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Light Sleep</div>
+                <div class="h2">{{ (metrics.lightSleep / 3600)|round(1) }} <small>hrs</small></div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">REM / Awake</div>
+                <div class="h2">{{ ((metrics.remSleep + metrics.awake) / 3600)|round(1) }} <small>hrs</small></div>
+            </div>
+        </div>
+    </div>
+
+    {% for session in sleepData %}
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    Sleep Session: {{ session.startTime|date('H:i') }} - {{ session.endTime|date('H:i') }}
+                    ({{ (session.duration / 3600)|round(1) }} hours)
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="progress" style="height: 40px;">
+                    {% for stage in session.stages %}
+                        {% set percent = (stage.duration / session.duration * 100) %}
+                        {% set stageClass = 'bg-secondary' %}
+                        {% if stage.stage == 'deep' %}{% set stageClass = 'bg-primary' %}{% endif %}
+                        {% if stage.stage == 'light' %}{% set stageClass = 'bg-info' %}{% endif %}
+                        {% if stage.stage == 'rem' %}{% set stageClass = 'bg-warning' %}{% endif %}
+                        {% if stage.stage == 'awake' or stage.stage == 'out_of_bed' %}{% set stageClass = 'bg-danger' %}{% endif %}
+
+                        <div class="progress-bar {{ stageClass }}"
+                             role="progressbar"
+                             style="width: {{ percent }}%"
+                             aria-valuenow="{{ percent }}"
+                             aria-valuemin="0"
+                             aria-valuemax="100"
+                             title="{{ stage.stage|capitalize }}: {{ (stage.duration / 60)|round }} min">
+                             {% if percent > 5 %}{{ stage.stage|capitalize }}{% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="mt-3 d-flex justify-content-between small text-muted">
+                    <div><i class="fa fa-square text-primary"></i> Deep</div>
+                    <div><i class="fa fa-square text-info"></i> Light</div>
+                    <div><i class="fa fa-square text-warning"></i> REM</div>
+                    <div><i class="fa fa-square text-danger"></i> Awake</div>
+                </div>
+            </div>
+        </div>
+    {% else %}
+        <div class="card card-body text-center py-5">
+            <div class="text-muted">No sleep records found for this period.</div>
+        </div>
+    {% endfor %}
+{% endblock %}

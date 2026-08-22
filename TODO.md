@@ -1,0 +1,3 @@
+- move to a postgres DB?
+- host on GitHub. Squish all to single commit without DB first
+- mobile app: add oxygen and rebuild
