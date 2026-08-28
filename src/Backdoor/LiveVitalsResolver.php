@@ -4,6 +4,7 @@ namespace App\Backdoor;
 
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
+use App\Service\Consolidation\OverlapResolver;
 
 /**
  * Prefers a fresh phone snapshot over stored records for the handful of
@@ -20,6 +21,7 @@ class LiveVitalsResolver
     public function __construct(
         private readonly SnapshotClient $snapshot,
         private readonly RecordRepository $records,
+        private readonly OverlapResolver $overlaps,
     ) {
     }
 
@@ -112,8 +114,14 @@ class LiveVitalsResolver
             ];
         }
 
+        // Summing every live Steps row double-counts when e.g. Samsung
+        // Health's own daily rollup and Health Connect's phone-sensor
+        // bursts both cover the same window — resolve overlaps first.
+        $records = $this->records->findByTypeSince(RecordType::STEPS->value, $startOfDayUtc);
+        $resolved = $this->overlaps->resolve($records)['keep'];
+
         $steps = 0;
-        foreach ($this->records->findByTypeSince(RecordType::STEPS->value, $startOfDayUtc) as $record) {
+        foreach ($resolved as $record) {
             $steps += (int) ($record->getPayload()['count'] ?? 0);
         }
 

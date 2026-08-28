@@ -33,6 +33,39 @@ enum RecordType: string
     case WEIGHT = 'weight';
     case SINGLE_SPO2 = 'single_spo2';
 
+    /**
+     * Health Connect self-healed several type strings on 28.08.2026
+     * (`HeartRateRecord` -> `HeartRate`, etc. — see docs/04-pc-sync-api.md's
+     * known-issue note); rows synced before that date still carry the old
+     * long form and won't be touched unless HC reports a fresh change for
+     * that exact record, so both forms coexist in `records` indefinitely.
+     * This maps either form to the short, canonical one so callers can
+     * group/query across both without caring which one a given row has.
+     */
+    private const LEGACY_ALIASES = [
+        self::HEART_RATE->value => 'HeartRate',
+        self::STEPS->value => 'Steps',
+        self::SLEEP->value => 'SleepSession',
+        self::SPO2->value => 'OxygenSaturation',
+    ];
+
+    public static function canonicalize(string $type): string
+    {
+        return self::LEGACY_ALIASES[$type] ?? $type;
+    }
+
+    /**
+     * @return string[] both type strings a given canonical (or legacy) type
+     *                   can appear as in `records`, for use in `type IN (...)`
+     */
+    public static function variants(string $type): array
+    {
+        $canonical = self::canonicalize($type);
+        $legacy = array_search($canonical, self::LEGACY_ALIASES, true);
+
+        return $legacy === false ? [$canonical] : [$canonical, $legacy];
+    }
+
     public function label(): string
     {
         return match($this) {

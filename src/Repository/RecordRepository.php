@@ -3,6 +3,7 @@
 namespace App\Repository;
 
 use App\Entity\Record;
+use App\Enum\RecordType;
 use Doctrine\Bundle\DoctrineBundle\Repository\ServiceEntityRepository;
 use Doctrine\Persistence\ManagerRegistry;
 
@@ -57,18 +58,75 @@ class RecordRepository extends ServiceEntityRepository
     }
 
     /**
+     * Matches both type-string variants for types affected by the
+     * 28.08.2026 self-heal (see RecordType::variants()), so a caller
+     * passing either the legacy or the current form still sees every live
+     * row for that concept, not just the ones spelled the way it asked.
+     *
      * @return Record[]
      */
     public function findByTypeSince(string $type, \DateTimeImmutable $since): array
     {
         return $this->createQueryBuilder('r')
-            ->andWhere('r.type = :type')
+            ->andWhere('r.type IN (:types)')
             ->andWhere('r.startTime >= :since')
             ->andWhere('r.deleted = false')
-            ->setParameter('type', $type)
+            ->setParameter('types', RecordType::variants($type))
             ->setParameter('since', $since)
             ->getQuery()
             ->getResult();
+    }
+
+    /**
+     * All live rows whose type is one of $types, oldest first — the shape
+     * ConsolidationRunner needs to scan one canonical type's records for
+     * duplicates/overlaps.
+     *
+     * @param string[] $types
+     * @return Record[]
+     */
+    public function findLiveByTypeIn(array $types): array
+    {
+        return $this->createQueryBuilder('r')
+            ->andWhere('r.type IN (:types)')
+            ->andWhere('r.deleted = false')
+            ->setParameter('types', $types)
+            ->orderBy('r.startTime', 'ASC')
+            ->addOrderBy('r.id', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Real DELETE, not a soft-mark — decided 29.08.2026 that consolidation
+     * hard-deletes tombstones and resolved duplicates alike, unlike the
+     * legacy import tools' deleted=1 convention.
+     */
+    public function hardDeleteTombstones(): int
+    {
+        return $this->createQueryBuilder('r')
+            ->delete()
+            ->andWhere('r.deleted = true')
+            ->getQuery()
+            ->execute();
+    }
+
+    /**
+     * @param int[] $ids
+     */
+    public function hardDeleteByIds(array $ids): int
+    {
+        $deleted = 0;
+        foreach (array_chunk($ids, 500) as $chunk) {
+            $deleted += $this->createQueryBuilder('r')
+                ->delete()
+                ->andWhere('r.id IN (:ids)')
+                ->setParameter('ids', $chunk)
+                ->getQuery()
+                ->execute();
+        }
+
+        return $deleted;
     }
 
     public function findLatestBySource(string $source): ?Record

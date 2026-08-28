@@ -5,6 +5,8 @@ namespace App\Tests\Backdoor;
 use App\Backdoor\LiveVitalsResolver;
 use App\Backdoor\SnapshotClient;
 use App\Repository\RecordRepository;
+use App\Service\Consolidation\DataOriginPriority;
+use App\Service\Consolidation\OverlapResolver;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -129,18 +131,37 @@ class LiveVitalsResolverTest extends KernelTestCase
         self::assertSame(800, $steps['steps']);
     }
 
+    public function testGetStepsTodayResolvesOverlappingAppsInsteadOfDoubleCounting(): void
+    {
+        $startOfDayUtc = new \DateTimeImmutable('today', new \DateTimeZone('UTC'));
+
+        // Samsung Health's whole-day rollup and Health Connect's own narrower
+        // phone-sensor bursts covering (part of) the same window — the real
+        // 28.08.2026 finding. Only Health Connect's count should be summed.
+        $this->insertStepsRecord(9455, $startOfDayUtc, $startOfDayUtc->modify('+23 hours'), 'com.sec.android.app.shealth');
+        $this->insertStepsRecord(5000, $startOfDayUtc->modify('+1 hour'), $startOfDayUtc->modify('+2 hours'), 'com.android.healthconnect.phone.sensor');
+        $this->insertStepsRecord(3147, $startOfDayUtc->modify('+3 hour'), $startOfDayUtc->modify('+4 hours'), 'com.android.healthconnect.phone.sensor');
+
+        $resolver = $this->resolverWithUnreachableSnapshot();
+
+        $steps = $resolver->getStepsToday($startOfDayUtc);
+
+        self::assertSame(LiveVitalsResolver::SOURCE_STORED_RECORDS, $steps['source']);
+        self::assertSame(8147, $steps['steps']);
+    }
+
     private function resolverWithSnapshot(array $snapshotBody): LiveVitalsResolver
     {
         $httpClient = new MockHttpClient(new MockResponse(json_encode($snapshotBody + ['api_version' => 1])));
 
-        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records);
+        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new OverlapResolver(new DataOriginPriority()));
     }
 
     private function resolverWithUnreachableSnapshot(): LiveVitalsResolver
     {
         $httpClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
 
-        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records);
+        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new OverlapResolver(new DataOriginPriority()));
     }
 
     private function insertLocationRecord(float $lat, float $lon): void
@@ -162,13 +183,15 @@ class LiveVitalsResolverTest extends KernelTestCase
         $this->em->flush();
     }
 
-    private function insertStepsRecord(int $count, \DateTimeImmutable $startTime): void
+    private function insertStepsRecord(int $count, \DateTimeImmutable $startTime, ?\DateTimeImmutable $endTime = null, ?string $dataOrigin = null): void
     {
         static $i = 0;
         ++$i;
-        $this->records->upsertByRecordUid("steps-$i", 'health_connect', 'StepsRecord', $startTime, null, $startTime, $startTime, false, [
-            'count' => $count,
-        ]);
+        $payload = ['count' => $count];
+        if ($dataOrigin !== null) {
+            $payload['dataOrigin'] = $dataOrigin;
+        }
+        $this->records->upsertByRecordUid("steps-$i", 'health_connect', 'StepsRecord', $startTime, $endTime, $startTime, $startTime, false, $payload);
         $this->em->flush();
     }
 }
