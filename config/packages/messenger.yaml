@@ -1,0 +1,4 @@
+framework:
+    messenger:
+        buses:
+            messenger.bus.default: []

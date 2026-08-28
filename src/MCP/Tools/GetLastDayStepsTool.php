@@ -2,8 +2,7 @@
 
 namespace App\MCP\Tools;
 
-use App\Repository\RecordRepository;
-use App\Enum\RecordType;
+use App\Backdoor\LiveVitalsResolver;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
 use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
 use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
@@ -12,13 +11,14 @@ use KLP\KlpMcpServer\Services\ToolService\Schema\StructuredSchema;
 use KLP\KlpMcpServer\Services\ToolService\StreamableToolInterface;
 
 /**
- * Returns the total steps for the current day.
+ * Returns the total steps for the current day: a live phone snapshot when
+ * reachable and dated today, otherwise the stored records summed.
  */
 class GetLastDayStepsTool implements StreamableToolInterface
 {
     private const TIMEZONE = 'Europe/Sofia';
 
-    public function __construct(private readonly RecordRepository $records)
+    public function __construct(private readonly LiveVitalsResolver $vitals)
     {
     }
 
@@ -29,7 +29,7 @@ class GetLastDayStepsTool implements StreamableToolInterface
 
     public function getDescription(): string
     {
-        return 'Returns the total step count for the current day.';
+        return 'Returns the total step count for the current day. Prefers a live read from the phone; falls back to summing stored records if the phone is unreachable.';
     }
 
     public function getInputSchema(): StructuredSchema
@@ -59,17 +59,12 @@ class GetLastDayStepsTool implements StreamableToolInterface
         $today = new \DateTimeImmutable('today', $timezone);
         $startOfDayUtc = $today->setTimezone(new \DateTimeZone('UTC'));
 
-        $records = $this->records->findByTypeSince(RecordType::STEPS->value, $startOfDayUtc);
-
-        $totalSteps = 0;
-        foreach ($records as $record) {
-            $payload = $record->getPayload();
-            $totalSteps += (int) ($payload['count'] ?? 0);
-        }
+        $steps = $this->vitals->getStepsToday($startOfDayUtc);
 
         return new StructuredToolResult([
             'status' => 'success',
-            'steps' => $totalSteps,
+            'source' => $steps['source'],
+            'steps' => $steps['steps'],
             'date' => $today->format('Y-m-d'),
             'timezone' => self::TIMEZONE,
         ]);

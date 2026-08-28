@@ -19,7 +19,10 @@
         "symfony/dotenv": "7.4.*",
         "symfony/flex": "^2",
         "symfony/framework-bundle": "7.4.*",
+        "symfony/http-client": "*",
+        "symfony/messenger": "*",
         "symfony/runtime": "7.4.*",
+        "symfony/scheduler": "*",
         "symfony/yaml": "7.4.*"
     },
     "config": {

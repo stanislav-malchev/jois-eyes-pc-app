@@ -2,8 +2,8 @@
 
 namespace App\MCP\Tools;
 
+use App\Backdoor\LiveVitalsResolver;
 use App\Repository\NamedLocationRepository;
-use App\Repository\RecordRepository;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
 use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
 use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
@@ -16,7 +16,7 @@ use Location\Distance\Haversine;
 class GetCurrentPlaceTool implements StreamableToolInterface
 {
     public function __construct(
-        private readonly RecordRepository $records,
+        private readonly LiveVitalsResolver $vitals,
         private readonly NamedLocationRepository $namedLocations,
     ) {
     }
@@ -28,7 +28,7 @@ class GetCurrentPlaceTool implements StreamableToolInterface
 
     public function getDescription(): string
     {
-        return 'Returns the current named place where Stan is, based on his latest GPS coordinates and defined geofences.';
+        return 'Returns the current named place where Stan is, based on his latest GPS coordinates and defined geofences. Prefers a live read from the phone; falls back to the last stored record if the phone is unreachable.';
     }
 
     public function getInputSchema(): StructuredSchema
@@ -52,7 +52,7 @@ class GetCurrentPlaceTool implements StreamableToolInterface
 
     public function execute(array $arguments): ToolResultInterface
     {
-        $fix = $this->records->findLatestBySource('location');
+        $fix = $this->vitals->getLocation();
 
         if (!$fix) {
             return new StructuredToolResult([
@@ -61,15 +61,7 @@ class GetCurrentPlaceTool implements StreamableToolInterface
             ]);
         }
 
-        $payload = $fix->getPayload();
-        if (!isset($payload['latitude']) || !isset($payload['longitude'])) {
-            return new StructuredToolResult([
-                'status' => 'no_data',
-                'formatted_location' => 'Latest location fix is missing coordinates.',
-            ]);
-        }
-
-        $currentCoord = new Coordinate((float) $payload['latitude'], (float) $payload['longitude']);
+        $currentCoord = new Coordinate($fix['latitude'], $fix['longitude']);
         $places = $this->namedLocations->findAll();
         $haversine = new Haversine();
 
@@ -81,7 +73,7 @@ class GetCurrentPlaceTool implements StreamableToolInterface
             $distance = $haversine->getDistance($currentCoord, $placeCoord);
 
             if ($distance <= $place->getRadiusMeters()) {
-                return $this->buildResult($place->getName(), $distance, $fix->getStartTime(), true);
+                return $this->buildResult($place->getName(), $distance, $fix['timestamp'], $fix['source'], true);
             }
 
             if ($minDistance === null || $distance < $minDistance) {
@@ -91,17 +83,18 @@ class GetCurrentPlaceTool implements StreamableToolInterface
         }
 
         if ($nearestPlace) {
-            return $this->buildResult($nearestPlace->getName(), $minDistance, $fix->getStartTime(), false);
+            return $this->buildResult($nearestPlace->getName(), $minDistance, $fix['timestamp'], $fix['source'], false);
         }
 
         return new StructuredToolResult([
             'status' => 'unknown',
+            'source' => $fix['source'],
             'formatted_location' => 'Outside all defined radii and no nearest place found.',
-            'last_updated' => $this->relativeTime($fix->getStartTime()),
+            'last_updated' => $this->relativeTime($fix['timestamp']),
         ]);
     }
 
-    private function buildResult(string $name, float $distance, \DateTimeImmutable $time, bool $isMatch): StructuredToolResult
+    private function buildResult(string $name, float $distance, \DateTimeImmutable $time, string $source, bool $isMatch): StructuredToolResult
     {
         $ageSeconds = (new \DateTimeImmutable())->getTimestamp() - $time->getTimestamp();
 
@@ -110,6 +103,7 @@ class GetCurrentPlaceTool implements StreamableToolInterface
             : sprintf('Stan is near %s (%d meters away)', $name, round($distance));
 
         return new StructuredToolResult([
+            'source' => $source,
             'formatted_location' => $formattedLocation,
             'timestamp' => $time->format(\DateTimeInterface::ATOM),
             'relative_age' => $this->relativeTime($time),

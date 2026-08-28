@@ -2,7 +2,7 @@
 
 namespace App\MCP\Tools;
 
-use App\Repository\RecordRepository;
+use App\Backdoor\LiveVitalsResolver;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
 use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
 use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
@@ -20,7 +20,7 @@ class LocationContextTool implements StreamableToolInterface
     private const NEAR_HOME_RADIUS_KM = 0.5;
 
     public function __construct(
-        private readonly RecordRepository $records,
+        private readonly LiveVitalsResolver $vitals,
         private readonly float $homeLatitude,
         private readonly float $homeLongitude,
     ) {
@@ -33,7 +33,7 @@ class LocationContextTool implements StreamableToolInterface
 
     public function getDescription(): string
     {
-        return 'Checks if the user is currently near home or elsewhere.';
+        return 'Checks if the user is currently near home or elsewhere. Prefers a live read from the phone; falls back to the last stored record if the phone is unreachable.';
     }
 
     public function getInputSchema(): StructuredSchema
@@ -59,7 +59,7 @@ class LocationContextTool implements StreamableToolInterface
 
     public function execute(array $arguments): ToolResultInterface
     {
-        $fix = $this->records->findLatestBySource('location');
+        $fix = $this->vitals->getLocation();
 
         if (!$fix) {
             return new StructuredToolResult([
@@ -69,18 +69,18 @@ class LocationContextTool implements StreamableToolInterface
             ]);
         }
 
-        $payload = $fix->getPayload();
         $distanceKm = $this->haversineKm(
             $this->homeLatitude,
             $this->homeLongitude,
-            (float) $payload['latitude'],
-            (float) $payload['longitude'],
+            $fix['latitude'],
+            $fix['longitude'],
         );
 
         return new StructuredToolResult([
             'status' => $distanceKm <= self::NEAR_HOME_RADIUS_KM ? 'near_home' : 'away',
+            'source' => $fix['source'],
             'distance_from_home_km' => round($distanceKm, 2),
-            'last_updated' => $this->relativeTime($fix->getStartTime()),
+            'last_updated' => $this->relativeTime($fix['timestamp']),
         ]);
     }
 

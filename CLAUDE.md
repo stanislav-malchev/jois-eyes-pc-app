@@ -30,7 +30,12 @@ Scaffolded and running. `symfony/framework-bundle`, Doctrine ORM/migrations,
 and EasyAdminBundle are installed; `src/Entity/Record.php` is the mirrored
 record table; `IngestController`/`HealthController`/`PingController` cover
 `/v1/*`; `Controller/Admin/` has the EasyAdmin dashboard + CRUD browser.
-SQLite db is `var/data_dev.db` (dev) / `var/data_test.db` (test).
+**Dev/prod DB is PostgreSQL 16** (system package, cluster `main` on
+`127.0.0.1:5433`, database `joiseyes`, user `root`/trust — no password; DSN
+lives in the gitignored `.env.dev.local`, migrated off SQLite 28.08.2026).
+`.env`'s committed `DATABASE_URL` is a dummy placeholder only — don't treat
+it as live config. **Tests still deliberately use SQLite**
+(`var/data_test.db`, set explicitly in `.env.test`) — don't "fix" that.
 
 ## Running it
 
@@ -63,13 +68,17 @@ Runs under WSL2 as a systemd service (`systemd=true` already set in
   "attempt to write a readonly database" errors.
 - `systemctl {status,restart,stop} joiseyes` / `journalctl -u joiseyes -f`
   for day-to-day operation. It's enabled, so it comes up on every WSL boot.
-- No separate "database service" — SQLite is just a file; nothing to
-  start beyond the app itself.
+- **Database service:** system PostgreSQL 16 (`pg_lsclusters` → cluster
+  `main` on port 5433), managed independently of `joiseyes.service` — check
+  it's `online` if `/v1/health` fails to connect. (This replaces an earlier
+  "SQLite is just a file, nothing to start" assumption — no longer true for
+  dev/prod, only for the test env.)
 
 ## Stack decisions already made (do not revisit)
 
-- Symfony + Doctrine ORM, SQLite storage, mirroring the envelope in
-  `docs/04-pc-sync-api.md`.
+- Symfony + Doctrine ORM. **PostgreSQL 16** storage for dev/prod (migrated
+  off SQLite 28.08.2026; tests still run on SQLite, see above), mirroring
+  the envelope in `docs/04-pc-sync-api.md`.
 - Listens on port 9091, all interfaces (`0.0.0.0`) — not yet restricted to
   the Tailscale interface (`docs/04-pc-sync-api.md`'s suggested port 8787
   and interface-only binding are not implemented; revisit if this box gets

@@ -2,8 +2,7 @@
 
 namespace App\MCP\Tools;
 
-use App\Repository\RecordRepository;
-use App\Enum\RecordType;
+use App\Backdoor\LiveVitalsResolver;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
 use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
 use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
@@ -12,11 +11,12 @@ use KLP\KlpMcpServer\Services\ToolService\Schema\StructuredSchema;
 use KLP\KlpMcpServer\Services\ToolService\StreamableToolInterface;
 
 /**
- * Returns the most recent location fix from the database.
+ * Returns the most recent location fix: a live phone snapshot when
+ * reachable, otherwise the last stored record.
  */
 class GetLastLocationTool implements StreamableToolInterface
 {
-    public function __construct(private readonly RecordRepository $records)
+    public function __construct(private readonly LiveVitalsResolver $vitals)
     {
     }
 
@@ -27,7 +27,7 @@ class GetLastLocationTool implements StreamableToolInterface
 
     public function getDescription(): string
     {
-        return 'Returns the most recent location fix (latitude, longitude, accuracy, altitude).';
+        return 'Returns the most recent location fix (latitude, longitude, accuracy, altitude). Prefers a live read from the phone; falls back to the last stored record if the phone is unreachable.';
     }
 
     public function getInputSchema(): StructuredSchema
@@ -53,32 +53,24 @@ class GetLastLocationTool implements StreamableToolInterface
 
     public function execute(array $arguments): ToolResultInterface
     {
-        $record = $this->records->createQueryBuilder('r')
-            ->andWhere('r.type = :type')
-            ->andWhere('r.deleted = false')
-            ->setParameter('type', RecordType::LOCATION_FIX->value)
-            ->orderBy('r.startTime', 'DESC')
-            ->setMaxResults(1)
-            ->getQuery()
-            ->getOneOrNullResult();
+        $location = $this->vitals->getLocation();
 
-        if (!$record) {
+        if (!$location) {
             return new StructuredToolResult([
                 'status' => 'no_data',
                 'message' => 'No location records found.',
             ]);
         }
 
-        $payload = $record->getPayload();
-
         return new StructuredToolResult([
             'status' => 'success',
-            'latitude' => $payload['latitude'] ?? null,
-            'longitude' => $payload['longitude'] ?? null,
-            'accuracy' => $payload['accuracy'] ?? null,
-            'altitude' => $payload['altitude'] ?? null,
-            'timestamp' => $record->getStartTime()->format(\DateTimeInterface::ATOM),
-            'relative_time' => $this->relativeTime($record->getStartTime()),
+            'source' => $location['source'],
+            'latitude' => $location['latitude'],
+            'longitude' => $location['longitude'],
+            'accuracy' => $location['accuracy'],
+            'altitude' => $location['altitude'],
+            'timestamp' => $location['timestamp']->format(\DateTimeInterface::ATOM),
+            'relative_time' => $this->relativeTime($location['timestamp']),
         ]);
     }
 

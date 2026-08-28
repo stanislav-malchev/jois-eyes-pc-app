@@ -2,6 +2,7 @@
 
 namespace App\MCP\Tools;
 
+use App\Backdoor\LiveVitalsResolver;
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
@@ -14,17 +15,21 @@ use KLP\KlpMcpServer\Services\ToolService\StreamableToolInterface;
 /**
  * Aggregates today's Health Connect records into one summary.
  *
- * Only steps and heart rate are synced today, so `exercise_minutes` and
- * `perceived_stress` come back null — they'll get real values once sleep
- * and exercise-session record types start syncing, without changing this
- * tool's output shape.
+ * `steps` prefers a live phone snapshot (see LiveVitalsResolver), falling
+ * back to summed stored records; `avg_heart_rate` is always a
+ * stored-records aggregate — a live snapshot only carries one current
+ * reading, not today's average. `exercise_minutes` and `perceived_stress`
+ * come back null — they'll get real values once sleep and exercise-session
+ * record types start syncing, without changing this tool's output shape.
  */
 class DailyVitalsSummaryTool implements StreamableToolInterface
 {
     private const TIMEZONE = 'Europe/Sofia';
 
-    public function __construct(private readonly RecordRepository $records)
-    {
+    public function __construct(
+        private readonly LiveVitalsResolver $vitals,
+        private readonly RecordRepository $records,
+    ) {
     }
 
     public function getName(): string
@@ -63,10 +68,7 @@ class DailyVitalsSummaryTool implements StreamableToolInterface
         $startOfDay = (new \DateTimeImmutable('today', new \DateTimeZone(self::TIMEZONE)))
             ->setTimezone(new \DateTimeZone('UTC'));
 
-        $steps = 0;
-        foreach ($this->records->findByTypeSince(RecordType::STEPS->value, $startOfDay) as $record) {
-            $steps += (int) ($record->getPayload()['count'] ?? 0);
-        }
+        $steps = $this->vitals->getStepsToday($startOfDay);
 
         $bpmReadings = [];
         foreach ($this->records->findByTypeSince(RecordType::HEART_RATE->value, $startOfDay) as $record) {
@@ -79,7 +81,8 @@ class DailyVitalsSummaryTool implements StreamableToolInterface
         $avgHeartRate = $bpmReadings === [] ? null : (int) round(array_sum($bpmReadings) / count($bpmReadings));
 
         return new StructuredToolResult([
-            'steps' => $steps,
+            'steps' => $steps['steps'],
+            'steps_source' => $steps['source'],
             'avg_heart_rate' => $avgHeartRate,
             'exercise_minutes' => null,
             'perceived_stress' => null,

@@ -2,8 +2,7 @@
 
 namespace App\MCP\Tools;
 
-use App\Repository\RecordRepository;
-use App\Enum\RecordType;
+use App\Backdoor\LiveVitalsResolver;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
 use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
 use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
@@ -12,11 +11,12 @@ use KLP\KlpMcpServer\Services\ToolService\Schema\StructuredSchema;
 use KLP\KlpMcpServer\Services\ToolService\StreamableToolInterface;
 
 /**
- * Returns the most recent heart rate reading from the database.
+ * Returns the most recent heart rate reading: a live phone snapshot when
+ * reachable, otherwise the last stored record.
  */
 readonly class GetLastHeartRateTool implements StreamableToolInterface
 {
-    public function __construct(private RecordRepository $records)
+    public function __construct(private LiveVitalsResolver $vitals)
     {
     }
 
@@ -27,7 +27,7 @@ readonly class GetLastHeartRateTool implements StreamableToolInterface
 
     public function getDescription(): string
     {
-        return 'Returns the most recent heart rate reading (BPM).';
+        return 'Returns the most recent heart rate reading (BPM). Prefers a live read from the phone; falls back to the last stored record if the phone is unreachable.';
     }
 
     public function getInputSchema(): StructuredSchema
@@ -53,40 +53,21 @@ readonly class GetLastHeartRateTool implements StreamableToolInterface
 
     public function execute(array $arguments): ToolResultInterface
     {
-        $record = $this->records->createQueryBuilder('r')
-            ->andWhere('r.type = :type')
-            ->andWhere('r.deleted = false')
-            ->setParameter('type', RecordType::HEART_RATE->value)
-            ->orderBy('r.startTime', 'DESC')
-            ->setMaxResults(1)
-            ->getQuery()
-            ->getOneOrNullResult();
+        $heartRate = $this->vitals->getHeartRate();
 
-        if (!$record) {
+        if (!$heartRate) {
             return new StructuredToolResult([
                 'status' => 'no_data',
                 'message' => 'No heart rate records found.',
             ]);
         }
 
-        $payload = $record->getPayload();
-        $samples = $payload['samples'] ?? [];
-        $latestSample = end($samples);
-
-        if (!$latestSample || !isset($latestSample['beatsPerMinute'])) {
-            return new StructuredToolResult([
-                'status' => 'no_data',
-                'message' => 'Heart rate record found, but no samples present.',
-            ]);
-        }
-
-        $sampleTime = isset($latestSample['time']) ? new \DateTimeImmutable($latestSample['time']) : $record->getStartTime();
-
         return new StructuredToolResult([
             'status' => 'success',
-            'bpm' => (int) $latestSample['beatsPerMinute'],
-            'timestamp' => $sampleTime->format(\DateTimeInterface::ATOM),
-            'relative_time' => $this->relativeTime($sampleTime),
+            'source' => $heartRate['source'],
+            'bpm' => $heartRate['bpm'],
+            'timestamp' => $heartRate['timestamp']->format(\DateTimeInterface::ATOM),
+            'relative_time' => $this->relativeTime($heartRate['timestamp']),
         ]);
     }
 
