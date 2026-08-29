@@ -41,22 +41,30 @@ class StepsController extends AbstractController
             $baseDate = new \DateTimeImmutable('now', $sofiaTz);
         }
 
-        [$startDate, $endDate, $dateDisplayString] = SofiaDayRange::forView($baseDate, $view);
-
-        $prevDate = $this->calculateAdjacentDate($baseDate, $view, -1);
-        $nextDate = $this->calculateAdjacentDate($baseDate, $view, 1);
-
-        $records = $this->recordRepository->createQueryBuilder('r')
+        $recordsQuery = $this->recordRepository->createQueryBuilder('r')
             ->andWhere('r.type IN (:types)')
-            ->andWhere('r.startTime >= :startDate')
-            ->andWhere('r.startTime <= :endDate')
             ->andWhere('r.deleted = false')
             ->setParameter('types', RecordType::variants(RecordType::STEPS->value))
-            ->setParameter('startDate', $startDate)
-            ->setParameter('endDate', $endDate)
-            ->orderBy('r.startTime', 'ASC')
-            ->getQuery()
-            ->getResult();
+            ->orderBy('r.startTime', 'ASC');
+
+        if ($view === 'A') {
+            // All-time isn't tied to a navigable date — every live Steps
+            // record ever, no bounds.
+            $dateDisplayString = 'All Time';
+            $prevDate = $nextDate = $baseDate;
+            $records = $recordsQuery->getQuery()->getResult();
+        } else {
+            [$startDate, $endDate, $dateDisplayString] = SofiaDayRange::forView($baseDate, $view);
+            $prevDate = $this->calculateAdjacentDate($baseDate, $view, -1);
+            $nextDate = $this->calculateAdjacentDate($baseDate, $view, 1);
+            $records = $recordsQuery
+                ->andWhere('r.startTime >= :startDate')
+                ->andWhere('r.startTime <= :endDate')
+                ->setParameter('startDate', $startDate)
+                ->setParameter('endDate', $endDate)
+                ->getQuery()
+                ->getResult();
+        }
 
         // Daily totals, zero-filled for days with no data — a per-record
         // chart stopped making sense once consolidation collapses (most)
@@ -69,8 +77,13 @@ class StepsController extends AbstractController
             $byDay[$day] = ($byDay[$day] ?? 0) + (int) ($record->getPayload()['count'] ?? 0);
         }
 
-        $rangeStart = $startDate->setTimezone($sofiaTz);
-        $rangeEnd = $endDate->setTimezone($sofiaTz);
+        if ($view === 'A') {
+            $rangeStart = $byDay === [] ? $baseDate : new \DateTimeImmutable(min(array_keys($byDay)), $sofiaTz);
+            $rangeEnd = new \DateTimeImmutable('now', $sofiaTz);
+        } else {
+            $rangeStart = $startDate->setTimezone($sofiaTz);
+            $rangeEnd = $endDate->setTimezone($sofiaTz);
+        }
 
         $dailyTotals = [];
         for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify('+1 day')) {
@@ -86,10 +99,26 @@ class StepsController extends AbstractController
             'best_day' => $dailyTotals === [] ? 0 : max($dailyTotals),
         ];
 
-        // Chart granularity: Year view buckets by month (12 bars) — a
-        // 365-bar chart isn't a useful "steps by year" view. D/W/M keep
-        // one bar per day.
-        if ($view === 'Y') {
+        // Chart granularity: Year view buckets by month (12 bars), All Time
+        // buckets by calendar year — neither a 365-bar nor a multi-thousand
+        // -bar chart is a useful overview. D/W/M keep one bar per day.
+        if ($view === 'A') {
+            $byYear = [];
+            foreach ($byDay as $day => $steps) {
+                $year = substr($day, 0, 4);
+                $byYear[$year] = ($byYear[$year] ?? 0) + $steps;
+            }
+
+            $stepData = [];
+            for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify('+1 year')) {
+                $key = $cursor->format('Y');
+                $stepData[] = [
+                    'date' => $key,
+                    'label' => $key,
+                    'steps' => $byYear[$key] ?? 0,
+                ];
+            }
+        } elseif ($view === 'Y') {
             $byMonth = [];
             foreach ($byDay as $day => $steps) {
                 $month = substr($day, 0, 7);
