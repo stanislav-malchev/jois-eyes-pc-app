@@ -2,20 +2,27 @@
 
 {% block content_title %}{{ dateDisplayString }}{% endblock %}
 
+{# base.html.twig's javascripts block renders this — override it here to also
+   load this page's chart module, instead of calling importmap() a second
+   time (only one <script type="importmap"> tag is valid per page). #}
+{% block importmap %}{{ importmap(['app', 'heart_rate_chart']) }}{% endblock %}
+
 {% block page_actions %}
     {% if ea is not null %}
-        <div class="btn-group me-2" role="group">
-            <a href="{{ path('admin_heart_rate', {date: prevDate, view: currentView}) }}" class="btn btn-secondary">
-                <i class="fa fa-chevron-left"></i>
-            </a>
-            <input type="date" value="{{ currentDate }}"
-                   class="btn btn-secondary text-white"
-                   onchange="window.location.href='{{ path('admin_heart_rate', {view: currentView}) }}&date=' + this.value"
-                   style="border-radius: 0; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1);">
-            <a href="{{ path('admin_heart_rate', {date: nextDate, view: currentView}) }}" class="btn btn-secondary">
-                <i class="fa fa-chevron-right"></i>
-            </a>
-        </div>
+        {% if currentView != 'A' %}
+            <div class="btn-group me-2" role="group">
+                <a href="{{ path('admin_heart_rate', {date: prevDate, view: currentView}) }}" class="btn btn-secondary">
+                    <i class="fa fa-chevron-left"></i>
+                </a>
+                <input type="date" value="{{ currentDate }}"
+                       class="btn btn-secondary text-white"
+                       onchange="window.location.href='{{ path('admin_heart_rate', {view: currentView}) }}&date=' + this.value"
+                       style="border-radius: 0; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1);">
+                <a href="{{ path('admin_heart_rate', {date: nextDate, view: currentView}) }}" class="btn btn-secondary">
+                    <i class="fa fa-chevron-right"></i>
+                </a>
+            </div>
+        {% endif %}
 
         <div class="btn-group" role="group">
             <a href="{{ path('admin_heart_rate', {date: currentDate, view: 'D'}) }}"
@@ -24,6 +31,10 @@
                class="btn {{ currentView == 'W' ? 'btn-primary' : 'btn-secondary' }}">W</a>
             <a href="{{ path('admin_heart_rate', {date: currentDate, view: 'M'}) }}"
                class="btn {{ currentView == 'M' ? 'btn-primary' : 'btn-secondary' }}">M</a>
+            <a href="{{ path('admin_heart_rate', {date: currentDate, view: 'Y'}) }}"
+               class="btn {{ currentView == 'Y' ? 'btn-primary' : 'btn-secondary' }}">Y</a>
+            <a href="{{ path('admin_heart_rate', {date: currentDate, view: 'A'}) }}"
+               class="btn {{ currentView == 'A' ? 'btn-primary' : 'btn-secondary' }}">All</a>
         </div>
     {% endif %}
 {% endblock %}
@@ -62,7 +73,6 @@
         </div>
     </div>
 
-    {# Structured data for possible JS integration #}
     <script id="chart-data" type="application/json">
         {{ chartData|json_encode|raw }}
     </script>

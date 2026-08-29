@@ -42,22 +42,30 @@ class HeartRateController extends AbstractController
             $baseDate = new \DateTimeImmutable('now', $sofiaTz);
         }
 
-        [$startDate, $endDate, $dateDisplayString] = SofiaDayRange::forView($baseDate, $view);
-
-        $prevDate = $this->calculateAdjacentDate($baseDate, $view, -1);
-        $nextDate = $this->calculateAdjacentDate($baseDate, $view, 1);
-
-        $records = $this->recordRepository->createQueryBuilder('r')
+        $recordsQuery = $this->recordRepository->createQueryBuilder('r')
             ->andWhere('r.type IN (:types)')
-            ->andWhere('r.startTime >= :startDate')
-            ->andWhere('r.startTime <= :endDate')
             ->andWhere('r.deleted = false')
             ->setParameter('types', RecordType::variants(RecordType::HEART_RATE->value))
-            ->setParameter('startDate', $startDate)
-            ->setParameter('endDate', $endDate)
-            ->orderBy('r.startTime', 'ASC')
-            ->getQuery()
-            ->getResult();
+            ->orderBy('r.startTime', 'ASC');
+
+        if ($view === 'A') {
+            // All-time isn't tied to a navigable date — every live
+            // HeartRate record ever, no bounds.
+            $dateDisplayString = 'All Time';
+            $prevDate = $nextDate = $baseDate;
+            $records = $recordsQuery->getQuery()->getResult();
+        } else {
+            [$startDate, $endDate, $dateDisplayString] = SofiaDayRange::forView($baseDate, $view);
+            $prevDate = $this->calculateAdjacentDate($baseDate, $view, -1);
+            $nextDate = $this->calculateAdjacentDate($baseDate, $view, 1);
+            $records = $recordsQuery
+                ->andWhere('r.startTime >= :startDate')
+                ->andWhere('r.startTime <= :endDate')
+                ->setParameter('startDate', $startDate)
+                ->setParameter('endDate', $endDate)
+                ->getQuery()
+                ->getResult();
+        }
 
         $bpmValues = [];
         foreach ($records as $record) {
@@ -70,7 +78,7 @@ class HeartRateController extends AbstractController
                     if (isset($sample['beatsPerMinute'])) {
                         $bpmValues[] = [
                             't' => $sample['time'] ?? $record->getStartTime()->format(\DateTimeInterface::ATOM),
-                            'v' => (int) $sample['beatsPerMinute']
+                            'v' => (int) $sample['beatsPerMinute'],
                         ];
                     }
                 }
@@ -79,9 +87,49 @@ class HeartRateController extends AbstractController
 
         $metrics = $this->calculateMetrics($bpmValues);
 
+        if ($view === 'D') {
+            // Raw samples, chronological — intraday BPM variation is
+            // meaningful, unlike Steps.
+            $chartData = array_map(
+                static fn (array $s) => ['label' => (new \DateTimeImmutable($s['t']))->setTimezone($sofiaTz)->format('H:i'), 'value' => $s['v']],
+                $bpmValues,
+            );
+        } else {
+            // W/M/Y aggregate to one average-BPM point per day/month across
+            // the *actual* period boundaries (gaps stay null, not 0 — "0
+            // BPM" isn't a real reading); A has no fixed boundary, so it
+            // spans from the earliest sample to now instead.
+            if ($view === 'A') {
+                $rangeStart = $bpmValues === [] ? $baseDate : new \DateTimeImmutable(min(array_column($bpmValues, 't')), $sofiaTz);
+                $rangeEnd = new \DateTimeImmutable('now', $sofiaTz);
+            } else {
+                $rangeStart = $startDate->setTimezone($sofiaTz);
+                $rangeEnd = $endDate->setTimezone($sofiaTz);
+            }
+
+            $bucketFormat = $view === 'A' ? 'Y' : ($view === 'Y' ? 'Y-m' : 'Y-m-d');
+            $labelFormat = $view === 'A' ? 'Y' : ($view === 'Y' ? 'M' : 'D, M j');
+            $step = $view === 'A' ? '+1 year' : ($view === 'Y' ? '+1 month' : '+1 day');
+
+            $byBucket = [];
+            foreach ($bpmValues as $sample) {
+                $key = (new \DateTimeImmutable($sample['t']))->setTimezone($sofiaTz)->format($bucketFormat);
+                $byBucket[$key][] = $sample['v'];
+            }
+
+            $chartData = [];
+            for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify($step)) {
+                $values = $byBucket[$cursor->format($bucketFormat)] ?? null;
+                $chartData[] = [
+                    'label' => $cursor->format($labelFormat),
+                    'value' => $values === null ? null : round(array_sum($values) / count($values), 1),
+                ];
+            }
+        }
+
         return $this->render('admin/heart_rate.html.twig', [
             'metrics' => $metrics,
-            'chartData' => $bpmValues,
+            'chartData' => $chartData,
             'currentDate' => $baseDate->format('Y-m-d'),
             'prevDate' => $prevDate->format('Y-m-d'),
             'nextDate' => $nextDate->format('Y-m-d'),
@@ -97,6 +145,8 @@ class HeartRateController extends AbstractController
     {
         $modifier = $direction > 0 ? '+' : '-';
         switch ($view) {
+            case 'Y':
+                return $date->modify($modifier . '1 year');
             case 'W':
                 return $date->modify($modifier . '1 week');
             case 'M':

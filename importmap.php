@@ -20,6 +20,10 @@ return [
         'path' => './assets/steps_chart.js',
         'entrypoint' => true,
     ],
+    'heart_rate_chart' => [
+        'path' => './assets/heart_rate_chart.js',
+        'entrypoint' => true,
+    ],
     'chart.js' => [
         'version' => '4.5.1',
     ],
