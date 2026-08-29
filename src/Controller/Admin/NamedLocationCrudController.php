@@ -21,5 +21,8 @@ class NamedLocationCrudController extends AbstractCrudController
         yield NumberField::new('latitude')->setNumDecimals(6);
         yield NumberField::new('longitude')->setNumDecimals(6);
         yield IntegerField::new('radiusMeters')->setHelp('Geofence radius in meters');
+        yield TextField::new('wifiSsid')
+            ->setRequired(false)
+            ->setHelp('Optional — the current-state tool resolves this place instantly from a matching WiFi network before falling back to GPS/geofence');
     }
 }

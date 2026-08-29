@@ -23,6 +23,7 @@ klp_mcp_server:
             ttl: 100
 
     tools:
+        - App\MCP\Tools\CurrentStateTool
         - App\MCP\Tools\DailyVitalsSummaryTool
         - App\MCP\Tools\LocationContextTool
         - App\MCP\Tools\GetLastLocationTool

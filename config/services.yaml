@@ -35,6 +35,11 @@ services:
             $stateFile: '%kernel.project_dir%/var/breath_state.json'
             $logFile: '%kernel.project_dir%/var/log/breath.log'
 
+    App\MCP\Tools\CurrentStateTool:
+        public: true
+        arguments:
+            $stateFile: '%kernel.project_dir%/var/breath_state.json'
+
     App\Scheduler\ConsolidateMessageHandler:
         arguments:
             $liveDeletes: '%app.consolidation_live_deletes%'

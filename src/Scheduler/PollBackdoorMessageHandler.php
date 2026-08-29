@@ -2,6 +2,7 @@
 
 namespace App\Scheduler;
 
+use App\Backdoor\CachedSnapshot;
 use App\Backdoor\SnapshotClient;
 use App\Scheduler\Message\PollBackdoorMessage;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
@@ -15,6 +16,15 @@ use Symfony\Component\Messenger\Attribute\AsMessageHandler;
  * threshold, not on every poll." Writes a small state file so the current
  * lane health is visible without re-polling (concepts/freshness.md's
  * thresholds; entities/the-breath.md calls this "the state file").
+ *
+ * Also caches the fields App\MCP\Tools\CurrentStateTool needs under
+ * `last_snapshot` — its "cached breath" primary data source (LLM wiki
+ * concepts/current-state-tool.md), so that tool answers from this file
+ * instead of triggering its own radio wake on every call. A failed poll
+ * (`$snapshot` null) leaves the previous `last_snapshot` in the file
+ * untouched rather than blanking it — an old-but-present cached snapshot is
+ * exactly what CurrentStateTool's own freshness/staleness math is for; a
+ * null would look like "no data ever" instead of "old data".
  *
  * Deliberately does NOT do the-breath's other jobs (activity inference,
  * nudges) — those need real specification first; see entities/the-breath.md.
@@ -39,7 +49,7 @@ class PollBackdoorMessageHandler
         $snapshot = $this->snapshot->fetch();
 
         if (!$snapshot) {
-            $this->writeState($polledAt, reachable: false, hcAgeSeconds: null, action: 'none');
+            $this->writeState($polledAt, reachable: false, hcAgeSeconds: null, action: 'none', snapshot: null);
             $this->log($polledAt, 'unreachable');
 
             return;
@@ -63,19 +73,37 @@ class PollBackdoorMessageHandler
             }
         }
 
-        $this->writeState($polledAt, reachable: true, hcAgeSeconds: $ageSeconds, action: $action);
+        $this->writeState($polledAt, reachable: true, hcAgeSeconds: $ageSeconds, action: $action, snapshot: $snapshot);
         $this->log($polledAt, sprintf('ok hc_age=%s action=%s', $ageSeconds ?? 'null', $action));
     }
 
-    private function writeState(\DateTimeImmutable $polledAt, bool $reachable, ?int $hcAgeSeconds, string $action): void
+    /**
+     * @param array<string, mixed>|null $snapshot the raw fetched snapshot, or null on an unreachable poll
+     */
+    private function writeState(\DateTimeImmutable $polledAt, bool $reachable, ?int $hcAgeSeconds, string $action, ?array $snapshot): void
     {
+        $previous = $this->readExistingState();
+
         file_put_contents($this->stateFile, json_encode([
             'polled_at' => $polledAt->format(\DateTimeInterface::ATOM),
             'phone_reachable' => $reachable,
             'health_connect_age_seconds' => $hcAgeSeconds,
             'health_connect_dead' => null !== $hcAgeSeconds && $hcAgeSeconds > self::HC_DEAD_SECONDS,
             'last_action' => $action,
+            'last_snapshot' => null !== $snapshot ? CachedSnapshot::fromRaw($snapshot, $polledAt) : ($previous['last_snapshot'] ?? null),
         ], \JSON_PRETTY_PRINT));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function readExistingState(): array
+    {
+        if (!is_file($this->stateFile)) {
+            return [];
+        }
+
+        return json_decode(file_get_contents($this->stateFile), true) ?? [];
     }
 
     private function log(\DateTimeImmutable $polledAt, string $message): void

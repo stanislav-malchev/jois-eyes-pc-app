@@ -105,6 +105,49 @@ class PollBackdoorMessageHandlerTest extends TestCase
         self::assertFalse($state['health_connect_dead']);
     }
 
+    public function testSuccessfulPollCachesSnapshotFieldsForCurrentStateTool(): void
+    {
+        $tsMs = (time() - 60) * 1000;
+        $httpClient = $this->httpClientForSnapshot([
+            'health_connect' => ['last_sync_ts' => $tsMs],
+            'screen' => ['on' => true, 'last_unlocked_ts' => $tsMs],
+            'location' => ['ts' => $tsMs, 'lat' => 43.22, 'lon' => 28.0, 'accuracy_m' => 8.4],
+            'connectivity' => ['wifi_ssid' => 'HomeNet'],
+            'activity' => ['type' => 'walking', 'steps_today' => 4231, 'steps_ts' => $tsMs],
+            'wearables' => ['band' => ['connected' => true, 'hr_bpm' => 78, 'hr_ts' => $tsMs]],
+        ]);
+        $handler = $this->handler($httpClient);
+
+        ($handler)(new PollBackdoorMessage());
+
+        $snapshot = $this->readState()['last_snapshot'];
+        self::assertTrue($snapshot['screen']['on']);
+        self::assertSame(43.22, $snapshot['location']['lat']);
+        self::assertSame('HomeNet', $snapshot['wifi_ssid']);
+        self::assertSame('walking', $snapshot['activity']['type']);
+        self::assertSame(4231, $snapshot['activity']['steps_today']);
+        self::assertSame(78, $snapshot['band']['hr_bpm']);
+    }
+
+    public function testUnreachablePollPreservesThePreviousCachedSnapshot(): void
+    {
+        $tsMs = (time() - 60) * 1000;
+        $reachableClient = $this->httpClientForSnapshot([
+            'health_connect' => ['last_sync_ts' => $tsMs],
+            'wearables' => ['band' => ['connected' => true, 'hr_bpm' => 78, 'hr_ts' => $tsMs]],
+        ]);
+        ($this->handler($reachableClient))(new PollBackdoorMessage());
+        $cachedAt = $this->readState()['last_snapshot']['cached_at'];
+
+        $unreachableClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
+        ($this->handler($unreachableClient))(new PollBackdoorMessage());
+
+        $state = $this->readState();
+        self::assertFalse($state['phone_reachable']);
+        self::assertSame(78, $state['last_snapshot']['band']['hr_bpm']);
+        self::assertSame($cachedAt, $state['last_snapshot']['cached_at']);
+    }
+
     private function handler(MockHttpClient $httpClient): PollBackdoorMessageHandler
     {
         return new PollBackdoorMessageHandler(
