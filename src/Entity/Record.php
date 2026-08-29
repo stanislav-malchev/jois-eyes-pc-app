@@ -43,6 +43,29 @@ class Record
     #[ORM\Column]
     private array $payload = [];
 
+    /**
+     * Denormalized cache of payload fields, populated by
+     * RecordMetricsExtractor — payload_json stays authoritative, these
+     * columns exist only so read paths (consolidation priority checks,
+     * chart/summary aggregates) don't have to decode JSON per row. Null for
+     * any type the extractor doesn't handle yet (open-type contract:
+     * unhandled types are left alone, never rejected).
+     */
+    #[ORM\Column(length: 255, nullable: true)]
+    private ?string $dataOrigin = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?float $metricValue = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?float $metricMin = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?float $metricMax = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?int $sampleCount = null;
+
     public function __construct(string $recordUid)
     {
         $this->recordUid = $recordUid;
@@ -150,6 +173,66 @@ class Record
     public function setPayload(array $payload): static
     {
         $this->payload = $payload;
+
+        return $this;
+    }
+
+    public function getDataOrigin(): ?string
+    {
+        return $this->dataOrigin;
+    }
+
+    public function setDataOrigin(?string $dataOrigin): static
+    {
+        $this->dataOrigin = $dataOrigin;
+
+        return $this;
+    }
+
+    public function getMetricValue(): ?float
+    {
+        return $this->metricValue;
+    }
+
+    public function setMetricValue(?float $metricValue): static
+    {
+        $this->metricValue = $metricValue;
+
+        return $this;
+    }
+
+    public function getMetricMin(): ?float
+    {
+        return $this->metricMin;
+    }
+
+    public function setMetricMin(?float $metricMin): static
+    {
+        $this->metricMin = $metricMin;
+
+        return $this;
+    }
+
+    public function getMetricMax(): ?float
+    {
+        return $this->metricMax;
+    }
+
+    public function setMetricMax(?float $metricMax): static
+    {
+        $this->metricMax = $metricMax;
+
+        return $this;
+    }
+
+    public function getSampleCount(): ?int
+    {
+        return $this->sampleCount;
+    }
+
+    public function setSampleCount(?int $sampleCount): static
+    {
+        $this->sampleCount = $sampleCount;
 
         return $this;
     }

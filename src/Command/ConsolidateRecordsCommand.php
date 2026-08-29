@@ -7,6 +7,8 @@ use App\Enum\RecordType;
 use App\Repository\RecordRepository;
 use App\Service\Consolidation\ConsolidationEngine;
 use App\Service\Consolidation\DailyStepsConsolidator;
+use App\Service\Normalization\RecordMetricsExtractor;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -27,6 +29,12 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  *   3. Every other type: ConsolidationEngine (exact-duplicate purge, then
  *      dataOrigin-priority/subset overlap resolution — never summing across
  *      apps). Anything neither rule can decide is left alone and reported.
+ *   4. RecordMetricsExtractor backfills the denormalized metric columns
+ *      (dataOrigin/metricValue/min/max/sampleCount) on every live row this
+ *      command already loads for steps 2-3 — a side effect piggybacked on
+ *      the existing full scan rather than a separate pass. Pure/idempotent
+ *      recompute from payload_json, unrelated to the delete decisions
+ *      above; skipped entirely on --dry-run so a dry run changes nothing.
  *
  * Steps 2 and 3 only ever soft-delete (RecordRepository::markDeleted())
  * — never a hard DELETE and never a payload mutation — so a future resync
@@ -51,6 +59,8 @@ class ConsolidateRecordsCommand extends Command
         private readonly RecordRepository $records,
         private readonly ConsolidationEngine $engine,
         private readonly DailyStepsConsolidator $stepsConsolidator,
+        private readonly RecordMetricsExtractor $metrics,
+        private readonly EntityManagerInterface $em,
     ) {
         parent::__construct();
     }
@@ -82,11 +92,18 @@ class ConsolidateRecordsCommand extends Command
             }
 
             $records = $this->records->findLiveByTypeIn(RecordType::variants($canonicalType));
+            if (!$dryRun) {
+                array_map($this->metrics->extract(...), $records);
+            }
             $result = $this->engine->consolidateBucket($records, $dryRun);
 
             $exactDupeCount += count($result['exactDuplicateIds']);
             $overlapCount += count($result['overlapIds']);
             array_push($flaggedGroups, ...$result['flagged']);
+        }
+
+        if (!$dryRun) {
+            $this->em->flush();
         }
 
         $io->writeln(sprintf('Exact duplicates: %d %s', $exactDupeCount, $dryRun ? 'would be marked deleted' : 'marked deleted'));
@@ -99,7 +116,7 @@ class ConsolidateRecordsCommand extends Command
                     '  type=%s ids=[%s] dataOrigins=[%s] window=%s..%s',
                     $group[0]->getType(),
                     implode(',', array_map(static fn (Record $r) => $r->getId(), $group)),
-                    implode(',', array_unique(array_map(static fn (Record $r) => $r->getPayload()['dataOrigin'] ?? 'null', $group))),
+                    implode(',', array_unique(array_map(static fn (Record $r) => $r->getDataOrigin() ?? 'null', $group))),
                     $group[0]->getStartTime()->format(\DateTimeInterface::ATOM),
                     max(array_map(static fn (Record $r) => $r->getEndTime() ?? $r->getStartTime(), $group))->format(\DateTimeInterface::ATOM),
                 ));
@@ -118,6 +135,10 @@ class ConsolidateRecordsCommand extends Command
     private function consolidateSteps(bool $dryRun): int
     {
         $records = $this->records->findLiveByTypeIn(RecordType::variants(self::STEPS_CANONICAL_TYPE));
+        if (!$dryRun) {
+            array_map($this->metrics->extract(...), $records);
+        }
+
         $marked = 0;
         foreach ($this->stepsConsolidator->groupByCalendarDay($records) as $dayRecords) {
             $marked += count($this->stepsConsolidator->consolidateDay($dayRecords, $dryRun));

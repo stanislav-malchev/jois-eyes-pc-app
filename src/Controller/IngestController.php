@@ -4,6 +4,7 @@ namespace App\Controller;
 
 use App\Exception\InvalidRecordException;
 use App\Repository\RecordRepository;
+use App\Service\Normalization\RecordMetricsExtractor;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\Exception\JsonException;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -14,7 +15,12 @@ use Symfony\Component\Routing\Attribute\Route;
 class IngestController
 {
     #[Route('/v1/ingest', name: 'v1_ingest', methods: ['POST'])]
-    public function ingest(Request $request, RecordRepository $records, EntityManagerInterface $em): Response
+    public function ingest(
+        Request $request,
+        RecordRepository $records,
+        RecordMetricsExtractor $metrics,
+        EntityManagerInterface $em,
+    ): Response
     {
         try {
             $body = $request->toArray();
@@ -51,7 +57,7 @@ class IngestController
                 continue;
             }
 
-            $records->upsertByRecordUid(
+            $record = $records->upsertByRecordUid(
                 $parsed['recordUid'],
                 $parsed['source'],
                 $parsed['type'],
@@ -62,6 +68,7 @@ class IngestController
                 $parsed['deleted'],
                 $parsed['payload'],
             );
+            $metrics->extract($record);
             $ackedUids[] = $parsed['recordUid'];
         }
 
