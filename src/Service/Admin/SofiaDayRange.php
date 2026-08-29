@@ -24,6 +24,11 @@ final class SofiaDayRange
     public static function forView(\DateTimeImmutable $sofiaDate, string $view): array
     {
         switch ($view) {
+            case 'Y':
+                $start = $sofiaDate->modify('first day of january this year')->setTime(0, 0, 0);
+                $end = $sofiaDate->modify('last day of december this year')->setTime(23, 59, 59);
+                $display = $start->format('Y');
+                break;
             case 'W':
                 $start = $sofiaDate->modify('monday this week')->setTime(0, 0, 0);
                 $end = $start->modify('+6 days')->setTime(23, 59, 59);

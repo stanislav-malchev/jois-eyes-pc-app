@@ -58,30 +58,25 @@ class StepsController extends AbstractController
             ->getQuery()
             ->getResult();
 
-        // One point per calendar day, zero-filled for days with no data —
-        // a per-record chart stopped making sense once consolidation
-        // collapses (most) days to a single row; a reader wants "how many
-        // steps that day", not when during the day they happened.
+        // Daily totals, zero-filled for days with no data — a per-record
+        // chart stopped making sense once consolidation collapses (most)
+        // days to a single row; a reader wants "how many steps that day",
+        // not when during the day they happened. Metrics (avg/best) always
+        // work at day granularity, regardless of the chart's own bucketing.
         $byDay = [];
         foreach ($records as $record) {
             $day = $record->getStartTime()->setTimezone($sofiaTz)->format('Y-m-d');
             $byDay[$day] = ($byDay[$day] ?? 0) + (int) ($record->getPayload()['count'] ?? 0);
         }
 
-        $stepData = [];
-        $cursor = $startDate->setTimezone($sofiaTz);
+        $rangeStart = $startDate->setTimezone($sofiaTz);
         $rangeEnd = $endDate->setTimezone($sofiaTz);
-        while ($cursor <= $rangeEnd) {
-            $key = $cursor->format('Y-m-d');
-            $stepData[] = [
-                'date' => $key,
-                'label' => $cursor->format('D, M j'),
-                'steps' => $byDay[$key] ?? 0,
-            ];
-            $cursor = $cursor->modify('+1 day');
+
+        $dailyTotals = [];
+        for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify('+1 day')) {
+            $dailyTotals[] = $byDay[$cursor->format('Y-m-d')] ?? 0;
         }
 
-        $dailyTotals = array_column($stepData, 'steps');
         $totalSteps = array_sum($dailyTotals);
         $daysWithData = count(array_filter($dailyTotals));
 
@@ -90,6 +85,37 @@ class StepsController extends AbstractController
             'daily_avg' => $daysWithData > 0 ? round($totalSteps / $daysWithData, 1) : 0,
             'best_day' => $dailyTotals === [] ? 0 : max($dailyTotals),
         ];
+
+        // Chart granularity: Year view buckets by month (12 bars) — a
+        // 365-bar chart isn't a useful "steps by year" view. D/W/M keep
+        // one bar per day.
+        if ($view === 'Y') {
+            $byMonth = [];
+            foreach ($byDay as $day => $steps) {
+                $month = substr($day, 0, 7);
+                $byMonth[$month] = ($byMonth[$month] ?? 0) + $steps;
+            }
+
+            $stepData = [];
+            for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify('+1 month')) {
+                $key = $cursor->format('Y-m');
+                $stepData[] = [
+                    'date' => $key,
+                    'label' => $cursor->format('M'),
+                    'steps' => $byMonth[$key] ?? 0,
+                ];
+            }
+        } else {
+            $stepData = [];
+            for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify('+1 day')) {
+                $key = $cursor->format('Y-m-d');
+                $stepData[] = [
+                    'date' => $key,
+                    'label' => $cursor->format('D, M j'),
+                    'steps' => $byDay[$key] ?? 0,
+                ];
+            }
+        }
 
         return $this->render('admin/steps.html.twig', [
             'metrics' => $metrics,
@@ -108,6 +134,8 @@ class StepsController extends AbstractController
     {
         $modifier = $direction > 0 ? '+' : '-';
         switch ($view) {
+            case 'Y':
+                return $date->modify($modifier . '1 year');
             case 'W':
                 return $date->modify($modifier . '1 week');
             case 'M':

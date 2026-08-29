@@ -29,6 +29,8 @@
                class="btn {{ currentView == 'W' ? 'btn-primary' : 'btn-secondary' }}">W</a>
             <a href="{{ path('admin_steps', {date: currentDate, view: 'M'}) }}"
                class="btn {{ currentView == 'M' ? 'btn-primary' : 'btn-secondary' }}">M</a>
+            <a href="{{ path('admin_steps', {date: currentDate, view: 'Y'}) }}"
+               class="btn {{ currentView == 'Y' ? 'btn-primary' : 'btn-secondary' }}">Y</a>
         </div>
     {% endif %}
 {% endblock %}
