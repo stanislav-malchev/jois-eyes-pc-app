@@ -73,6 +73,25 @@ Runs under WSL2 as a systemd service (`systemd=true` already set in
   it's `online` if `/v1/health` fails to connect. (This replaces an earlier
   "SQLite is just a file, nothing to start" assumption — no longer true for
   dev/prod, only for the test env.)
+- **Frontend assets** (added 29.08.2026, for the admin Steps chart):
+  Symfony AssetMapper, not Webpack Encore/yarn — this box has no yarn
+  installed and there was no existing JS pipeline, so AssetMapper (zero
+  Node toolchain, `composer require symfony/asset-mapper` +
+  `php bin/console importmap:require <pkg>`) was the lower-friction choice.
+  `importmap.php` is the manifest (committed); `assets/vendor/` (downloaded
+  packages) and `public/assets/` (compiled output) are both gitignored and
+  regenerable (`importmap:install`, `asset-map:compile`).
+  **Assets are pre-compiled, not served dynamically** — `public/router.php`
+  (above) only defers to Symfony's kernel when a requested path doesn't
+  exist on disk; whatever AssetMapper's dynamic dev-mode serving does on
+  its way out doesn't survive router.php's `require`-as-last-statement
+  shape (surfaces as "Invalid return value: callable object expected, int
+  returned from public/router.php"). Pre-compiling avoids that code path
+  entirely — real hashed files under `public/assets/` that router.php
+  already serves directly, like any other static asset. **Consequence:**
+  any edit to `assets/*.js` needs `php bin/console asset-map:compile
+  --env=dev` re-run afterward, or the browser keeps loading the stale
+  compiled version — there's no live-reload here.
 
 ## Stack decisions already made (do not revisit)
 
