@@ -2,6 +2,11 @@
 
 {% block content_title %}{{ dateDisplayString }}{% endblock %}
 
+{# base.html.twig's javascripts block renders this — override it here to also
+   load this page's chart module, instead of calling importmap() a second
+   time (only one <script type="importmap"> tag is valid per page). #}
+{% block importmap %}{{ importmap(['app', 'steps_chart']) }}{% endblock %}
+
 {% block page_actions %}
     {% if ea is not null %}
         <div class="btn-group me-2" role="group">
@@ -64,51 +69,5 @@
 
     <script id="chart-data" type="application/json">
         {{ chartData|json_encode|raw }}
-    </script>
-
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
-    <script>
-        (function () {
-            var raw = document.getElementById('chart-data');
-            var canvas = document.getElementById('stepsChart');
-            if (!raw || !canvas) {
-                return;
-            }
-
-            var days = JSON.parse(raw.textContent || '[]');
-            if (days.length === 0) {
-                return;
-            }
-
-            new Chart(canvas.getContext('2d'), {
-                type: 'bar',
-                data: {
-                    labels: days.map(function (d) { return d.label; }),
-                    datasets: [{
-                        label: 'Steps',
-                        data: days.map(function (d) { return d.steps; }),
-                        backgroundColor: '#0d6efd',
-                        borderRadius: 4,
-                        maxBarThickness: 48,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                label: function (ctx) { return ctx.parsed.y.toLocaleString() + ' steps'; },
-                            },
-                        },
-                    },
-                    scales: {
-                        x: { grid: { display: false } },
-                        y: { beginAtZero: true, ticks: { precision: 0 } },
-                    },
-                },
-            });
-        })();
     </script>
 {% endblock %}

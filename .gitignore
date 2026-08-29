@@ -22,3 +22,8 @@
 # Personal Xiaomi/Mi Fitness export used for the historical data import — never meant to be tracked
 /input/
 ###< local ###
+
+###> symfony/asset-mapper ###
+/public/assets/
+/assets/vendor/
+###< symfony/asset-mapper ###

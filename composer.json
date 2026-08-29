@@ -15,6 +15,7 @@
         "easycorp/easyadmin-bundle": "^5.5",
         "klapaudius/symfony-mcp-server": "^1.9",
         "mjaschen/phpgeo": "^6.0",
+        "symfony/asset-mapper": "*",
         "symfony/console": "7.4.*",
         "symfony/dotenv": "7.4.*",
         "symfony/flex": "^2",
@@ -23,7 +24,10 @@
         "symfony/messenger": "*",
         "symfony/runtime": "7.4.*",
         "symfony/scheduler": "*",
-        "symfony/yaml": "7.4.*"
+        "symfony/twig-bundle": "7.4.*",
+        "symfony/yaml": "7.4.*",
+        "twig/extra-bundle": "^2.12|^3.0",
+        "twig/twig": "^2.12|^3.0"
     },
     "config": {
         "allow-plugins": {
@@ -57,7 +61,8 @@
     "scripts": {
         "auto-scripts": {
             "cache:clear": "symfony-cmd",
-            "assets:install %PUBLIC_DIR%": "symfony-cmd"
+            "assets:install %PUBLIC_DIR%": "symfony-cmd",
+            "importmap:install": "symfony-cmd"
         },
         "post-install-cmd": [
             "@auto-scripts"
