@@ -8,7 +8,7 @@ use App\Entity\Record;
  * Same canonical type + identical start_time (e.g. an /v1/ingest retry
  * re-posting the same record under a fresh recordUid) — keep the richer
  * payload, tie-break by lowest id. Shared by ConsolidationEngine (generic
- * overlap handling) and DailyStepsMerger (Steps' own daily-merge rule),
+ * overlap handling) and DailyStepsConsolidator (Steps' own daily rule),
  * since both need to drop retry duplicates before doing anything else.
  */
 final class ExactDuplicates

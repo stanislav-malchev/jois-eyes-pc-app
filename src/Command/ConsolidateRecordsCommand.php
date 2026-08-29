@@ -6,7 +6,7 @@ use App\Entity\Record;
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
 use App\Service\Consolidation\ConsolidationEngine;
-use App\Service\Consolidation\DailyStepsMerger;
+use App\Service\Consolidation\DailyStepsConsolidator;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -17,15 +17,22 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 /**
  * Phase 1 of the "consolidation" plan (see LLM wiki concepts/consolidation.md):
  * a one-off backlog pass over the live `records` table, reviewed with
- * --dry-run before anything is actually deleted.
+ * --dry-run before anything is marked deleted.
  *
- *   1. Hard-delete deleted=true tombstones.
- *   2. Steps: DailyStepsMerger collapses each calendar day to one row
- *      (Health Connect's own total when present, otherwise whatever's
- *      there), per Stan's 29.08.2026 correction — see that class.
+ *   1. Hard-delete deleted=true tombstones — safe to physically remove,
+ *      see RecordRepository::hardDeleteTombstones().
+ *   2. Steps: DailyStepsConsolidator soft-deletes each calendar day's
+ *      losing-priority rows, leaving the winning tier's rows untouched
+ *      (never merged/mutated) — see that class for why.
  *   3. Every other type: ConsolidationEngine (exact-duplicate purge, then
  *      dataOrigin-priority/subset overlap resolution — never summing across
  *      apps). Anything neither rule can decide is left alone and reported.
+ *
+ * Steps 2 and 3 only ever soft-delete (RecordRepository::markDeleted())
+ * — never a hard DELETE and never a payload mutation — so a future resync
+ * of anything consolidation touched just upserts back to the same state,
+ * no duplication or data loss either way. See markDeleted()'s
+ * docblock for the incident that made this non-negotiable.
  *
  * Phase 2 (the recurring ConsolidationSchedule job, App\Scheduler\
  * ConsolidateMessageHandler) reuses the same services against a much
@@ -34,7 +41,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  */
 #[AsCommand(
     name: 'app:consolidate:records',
-    description: 'Hard-delete tombstones and collapse duplicate/overlapping records (see LLM wiki concepts/consolidation.md)',
+    description: 'Hard-delete tombstones and soft-delete duplicate/overlapping records (see LLM wiki concepts/consolidation.md)',
 )]
 class ConsolidateRecordsCommand extends Command
 {
@@ -43,7 +50,7 @@ class ConsolidateRecordsCommand extends Command
     public function __construct(
         private readonly RecordRepository $records,
         private readonly ConsolidationEngine $engine,
-        private readonly DailyStepsMerger $stepsMerger,
+        private readonly DailyStepsConsolidator $stepsConsolidator,
     ) {
         parent::__construct();
     }
@@ -62,8 +69,8 @@ class ConsolidateRecordsCommand extends Command
         $tombstones = $dryRun ? $this->records->countDeleted() : $this->records->hardDeleteTombstones();
         $io->writeln(sprintf('Tombstones: %d %s', $tombstones, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
 
-        $stepsRemoved = $this->consolidateSteps($dryRun);
-        $io->writeln(sprintf('Steps daily merge: %d row(s) %s', $stepsRemoved, $dryRun ? 'would be removed' : 'removed'));
+        $stepsMarked = $this->consolidateSteps($dryRun);
+        $io->writeln(sprintf('Steps: %d row(s) %s', $stepsMarked, $dryRun ? 'would be marked deleted' : 'marked deleted'));
 
         $exactDupeCount = 0;
         $overlapCount = 0;
@@ -82,8 +89,8 @@ class ConsolidateRecordsCommand extends Command
             array_push($flaggedGroups, ...$result['flagged']);
         }
 
-        $io->writeln(sprintf('Exact duplicates: %d %s', $exactDupeCount, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
-        $io->writeln(sprintf('Overlap losers: %d %s', $overlapCount, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
+        $io->writeln(sprintf('Exact duplicates: %d %s', $exactDupeCount, $dryRun ? 'would be marked deleted' : 'marked deleted'));
+        $io->writeln(sprintf('Overlap losers: %d %s', $overlapCount, $dryRun ? 'would be marked deleted' : 'marked deleted'));
 
         if ($flaggedGroups !== []) {
             $io->section(sprintf('%d overlapping group(s) left unresolved (equal priority, not a subset of each other) — needs manual review', count($flaggedGroups)));
@@ -111,12 +118,12 @@ class ConsolidateRecordsCommand extends Command
     private function consolidateSteps(bool $dryRun): int
     {
         $records = $this->records->findLiveByTypeIn(RecordType::variants(self::STEPS_CANONICAL_TYPE));
-        $removed = 0;
-        foreach ($this->stepsMerger->groupByCalendarDay($records) as $dayRecords) {
-            $removed += count($this->stepsMerger->mergeDay($dayRecords, $dryRun));
+        $marked = 0;
+        foreach ($this->stepsConsolidator->groupByCalendarDay($records) as $dayRecords) {
+            $marked += count($this->stepsConsolidator->consolidateDay($dayRecords, $dryRun));
         }
 
-        return $removed;
+        return $marked;
     }
 
     /**

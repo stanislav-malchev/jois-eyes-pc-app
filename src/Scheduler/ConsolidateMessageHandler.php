@@ -7,7 +7,7 @@ use App\Enum\RecordType;
 use App\Repository\RecordRepository;
 use App\Scheduler\Message\ConsolidateMessage;
 use App\Service\Consolidation\ConsolidationEngine;
-use App\Service\Consolidation\DailyStepsMerger;
+use App\Service\Consolidation\DailyStepsConsolidator;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
 
 /**
@@ -37,7 +37,7 @@ class ConsolidateMessageHandler
     public function __construct(
         private readonly RecordRepository $records,
         private readonly ConsolidationEngine $engine,
-        private readonly DailyStepsMerger $stepsMerger,
+        private readonly DailyStepsConsolidator $stepsConsolidator,
         private readonly bool $liveDeletes,
         private readonly string $stateFile,
         private readonly string $logFile,
@@ -69,8 +69,8 @@ class ConsolidateMessageHandler
             $candidates = $this->mergeById($this->findNeighbors($canonicalType, $fresh), $fresh);
 
             if ($canonicalType === self::STEPS_CANONICAL_TYPE) {
-                foreach ($this->stepsMerger->groupByCalendarDay($candidates) as $dayRecords) {
-                    $deleted += count($this->stepsMerger->mergeDay($dayRecords, !$this->liveDeletes));
+                foreach ($this->stepsConsolidator->groupByCalendarDay($candidates) as $dayRecords) {
+                    $deleted += count($this->stepsConsolidator->consolidateDay($dayRecords, !$this->liveDeletes));
                 }
                 continue;
             }

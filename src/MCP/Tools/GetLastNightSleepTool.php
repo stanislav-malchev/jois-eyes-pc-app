@@ -54,9 +54,9 @@ class GetLastNightSleepTool implements StreamableToolInterface
     public function execute(array $arguments): ToolResultInterface
     {
         $record = $this->records->createQueryBuilder('r')
-            ->andWhere('r.type = :type')
+            ->andWhere('r.type IN (:types)')
             ->andWhere('r.deleted = false')
-            ->setParameter('type', RecordType::SLEEP->value)
+            ->setParameter('types', RecordType::variants(RecordType::SLEEP->value))
             ->orderBy('r.startTime', 'DESC')
             ->setMaxResults(1)
             ->getQuery()

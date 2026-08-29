@@ -10,11 +10,16 @@ use App\Repository\RecordRepository;
  * canonical type's candidate record set. Used for sample-array types
  * (HeartRate, OxygenSaturation, ...) where "keep the winning row(s), drop
  * the rest" is the right shape. Steps is handled separately by
- * DailyStepsMerger, which collapses a day's records into one instead of
- * just dropping losers — see that class for why.
+ * DailyStepsConsolidator — same "keep the winning tier" idea, but per
+ * calendar day rather than per overlap pair — see that class for why.
  *
- * Tombstone hard-deletion isn't handled here — it isn't type-scoped,
- * callers do it separately (see RecordRepository::hardDeleteTombstones()).
+ * "Drop" here means soft-delete (RecordRepository::markDeleted()), never a
+ * hard DELETE — see that method's docblock for why (breaks the
+ * idempotent-upsert-by-recordUid contract otherwise). Tombstone
+ * hard-deletion isn't handled here at all — it isn't type-scoped, callers
+ * do it separately (see RecordRepository::hardDeleteTombstones()), and a
+ * genuine phone-issued tombstone is safe to hard-delete for a different
+ * reason than why consolidation's own decisions aren't.
  *
  * Deliberately takes the candidate set as a parameter rather than fetching
  * it itself: the Phase-1 backlog command (app:consolidate:records) passes
@@ -38,6 +43,10 @@ final class ConsolidationEngine
     public function consolidateBucket(array $records, bool $dryRun): array
     {
         $exactDuplicateIds = ExactDuplicates::ids($records);
+        $exactDuplicateLosers = array_values(array_filter(
+            $records,
+            static fn (Record $r) => in_array($r->getId(), $exactDuplicateIds, true),
+        ));
 
         $remaining = array_values(array_filter(
             $records,
@@ -47,7 +56,7 @@ final class ConsolidationEngine
         $overlapIds = array_map(static fn (Record $r) => $r->getId(), $resolution['drop']);
 
         if (!$dryRun) {
-            $this->records->hardDeleteByIds([...$exactDuplicateIds, ...$overlapIds]);
+            $this->records->markDeleted([...$exactDuplicateLosers, ...$resolution['drop']]);
         }
 
         return [

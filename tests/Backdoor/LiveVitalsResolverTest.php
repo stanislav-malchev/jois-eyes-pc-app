@@ -5,7 +5,7 @@ namespace App\Tests\Backdoor;
 use App\Backdoor\LiveVitalsResolver;
 use App\Backdoor\SnapshotClient;
 use App\Repository\RecordRepository;
-use App\Service\Consolidation\DailyStepsMerger;
+use App\Service\Consolidation\DailyStepsConsolidator;
 use App\Service\Consolidation\DataOriginPriority;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
@@ -154,14 +154,14 @@ class LiveVitalsResolverTest extends KernelTestCase
     {
         $httpClient = new MockHttpClient(new MockResponse(json_encode($snapshotBody + ['api_version' => 1])));
 
-        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsMerger(new DataOriginPriority(), $this->records, $this->em));
+        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsConsolidator(new DataOriginPriority(), $this->records));
     }
 
     private function resolverWithUnreachableSnapshot(): LiveVitalsResolver
     {
         $httpClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
 
-        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsMerger(new DataOriginPriority(), $this->records, $this->em));
+        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsConsolidator(new DataOriginPriority(), $this->records));
     }
 
     private function insertLocationRecord(float $lat, float $lon): void

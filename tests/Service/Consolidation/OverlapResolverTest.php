@@ -10,8 +10,8 @@ use PHPUnit\Framework\TestCase;
 /**
  * OverlapResolver backs HeartRate/OxygenSaturation-style sample-array
  * types, where "keep the winning row(s), drop the rest" is the right
- * model. Steps is handled separately by DailyStepsMerger (always collapses
- * to one row per day) — see DailyStepsMergerTest for that behavior.
+ * model. Steps is handled separately by DailyStepsConsolidator (always
+ * resolves to one logical total per day) — see DailyStepsConsolidatorTest.
  */
 class OverlapResolverTest extends TestCase
 {

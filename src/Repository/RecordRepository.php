@@ -140,9 +140,14 @@ class RecordRepository extends ServiceEntityRepository
     }
 
     /**
-     * Real DELETE, not a soft-mark — decided 29.08.2026 that consolidation
-     * hard-deletes tombstones and resolved duplicates alike, unlike the
-     * legacy import tools' deleted=1 convention.
+     * Real DELETE — safe specifically because a genuine tombstone
+     * (payload == {"deleted": true}, set by the phone itself) carries no
+     * live data to lose: if the phone ever re-sends that exact recordUid as
+     * a tombstone again, upsertByRecordUid just re-inserts an equivalent
+     * deleted=true row, which the next pass hard-deletes again. Contrast
+     * with markDeleted() below, used for consolidation's own
+     * dedup/overlap decisions, which must stay reversible — see that
+     * method's docblock.
      */
     public function hardDeleteTombstones(): int
     {
@@ -154,21 +159,54 @@ class RecordRepository extends ServiceEntityRepository
     }
 
     /**
-     * @param int[] $ids
+     * Soft-delete only — corrected 29.08.2026 after hard-deleting
+     * consolidation's own losing rows broke the ingest contract's
+     * "idempotent upsert-by-recordUid" guarantee (docs/04-pc-sync-api.md):
+     * recordUid is phone-generated and stable, so if a hard-deleted row's
+     * recordUid was ever re-synced (e.g. after a phone app reinstall
+     * re-imports Health Connect history), upsertByRecordUid wouldn't find
+     * it and would INSERT it as brand new — resurrecting exactly the
+     * duplicate consolidation had removed, with no way to tell it apart
+     * from genuinely new data. Marking deleted=true instead means a
+     * resync's upsert finds the existing row and updates it in place; if
+     * that revives a genuine duplicate (flips it back to deleted=false),
+     * the next consolidation pass just re-marks it, same outcome, no data
+     * loss or double counting either way.
+     *
+     * Takes the entities themselves, not just their ids, so it can also set
+     * ->setDeleted(true) on each in-memory object after the bulk UPDATE —
+     * like the bulk DELETE it replaced, a DQL bulk UPDATE bypasses the
+     * identity map, so any already-loaded copy of a row (e.g. the very
+     * candidate list a caller just resolved losers from) would otherwise
+     * keep reporting deleted=false in-process even though the DB is
+     * already correct.
+     *
+     * @param Record[] $records
      */
-    public function hardDeleteByIds(array $ids): int
+    public function markDeleted(array $records): int
     {
-        $deleted = 0;
+        if ($records === []) {
+            return 0;
+        }
+
+        $ids = array_map(static fn (Record $r) => $r->getId(), $records);
+        $updated = 0;
         foreach (array_chunk($ids, 500) as $chunk) {
-            $deleted += $this->createQueryBuilder('r')
-                ->delete()
+            $updated += $this->createQueryBuilder('r')
+                ->update()
+                ->set('r.deleted', ':deleted')
                 ->andWhere('r.id IN (:ids)')
+                ->setParameter('deleted', true)
                 ->setParameter('ids', $chunk)
                 ->getQuery()
                 ->execute();
         }
 
-        return $deleted;
+        foreach ($records as $record) {
+            $record->setDeleted(true);
+        }
+
+        return $updated;
     }
 
     public function findLatestBySource(string $source): ?Record

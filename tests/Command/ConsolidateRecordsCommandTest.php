@@ -30,7 +30,7 @@ class ConsolidateRecordsCommandTest extends KernelTestCase
         $this->tester = new CommandTester($application->find('app:consolidate:records'));
     }
 
-    public function testDryRunReportsWithoutDeletingAnything(): void
+    public function testDryRunReportsWithoutChangingAnything(): void
     {
         $this->insertTombstone('tomb-1');
         $this->insertLocation('loc-1', $start = new \DateTimeImmutable('2026-08-29T10:00:00Z'));
@@ -41,11 +41,12 @@ class ConsolidateRecordsCommandTest extends KernelTestCase
         $this->tester->execute(['--dry-run' => true]);
 
         self::assertSame($before, $this->records->countAll());
+        self::assertFalse($this->records->findOneByRecordUid('loc-2')->isDeleted());
         self::assertStringContainsString('Tombstones: 1 would be hard-deleted', $this->tester->getDisplay());
-        self::assertStringContainsString('Exact duplicates: 1 would be hard-deleted', $this->tester->getDisplay());
+        self::assertStringContainsString('Exact duplicates: 1 would be marked deleted', $this->tester->getDisplay());
     }
 
-    public function testRealRunHardDeletesTombstonesAndExactDuplicates(): void
+    public function testRealRunHardDeletesTombstonesButOnlySoftDeletesExactDuplicates(): void
     {
         $this->insertTombstone('tomb-1');
         $start = new \DateTimeImmutable('2026-08-29T10:00:00Z');
@@ -54,13 +55,17 @@ class ConsolidateRecordsCommandTest extends KernelTestCase
 
         $this->tester->execute([]);
 
-        self::assertSame(1, $this->records->countAll());
-        self::assertNotNull($this->records->findOneByRecordUid('loc-1'));
-        self::assertNull($this->records->findOneByRecordUid('loc-2'));
+        // Genuine tombstone: physically gone, safe (see RecordRepository::hardDeleteTombstones()).
         self::assertNull($this->records->findOneByRecordUid('tomb-1'));
+
+        // Exact duplicate: soft-deleted only, recordUid preserved so a
+        // resync can't recreate it as a "new" row (see markDeleted()).
+        self::assertSame(2, $this->records->countAll());
+        self::assertFalse($this->records->findOneByRecordUid('loc-1')->isDeleted());
+        self::assertTrue($this->records->findOneByRecordUid('loc-2')->isDeleted());
     }
 
-    public function testRealRunDropsLowerPriorityOverlappingSteps(): void
+    public function testRealRunSoftDeletesLowerPriorityOverlappingStepsWithoutTouchingTheWinner(): void
     {
         $day = new \DateTimeImmutable('2026-08-29T00:00:00Z');
         $this->records->upsertByRecordUid('steps-shealth', 'health_connect', 'StepsRecord', $day, $day->modify('+23 hours'), $day, $day, false, [
@@ -75,8 +80,14 @@ class ConsolidateRecordsCommandTest extends KernelTestCase
 
         $this->tester->execute([]);
 
-        self::assertNull($this->records->findOneByRecordUid('steps-shealth'));
-        self::assertNotNull($this->records->findOneByRecordUid('steps-hc'));
+        $shealth = $this->records->findOneByRecordUid('steps-shealth');
+        self::assertNotNull($shealth);
+        self::assertTrue($shealth->isDeleted());
+        self::assertSame(9455, $shealth->getPayload()['count']); // untouched, not zeroed/merged
+
+        $hc = $this->records->findOneByRecordUid('steps-hc');
+        self::assertFalse($hc->isDeleted());
+        self::assertSame(500, $hc->getPayload()['count']); // untouched, not mutated into a sum
     }
 
     private function insertTombstone(string $uid): void

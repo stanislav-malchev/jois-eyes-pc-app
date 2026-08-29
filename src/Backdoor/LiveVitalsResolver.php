@@ -4,7 +4,7 @@ namespace App\Backdoor;
 
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
-use App\Service\Consolidation\DailyStepsMerger;
+use App\Service\Consolidation\DailyStepsConsolidator;
 
 /**
  * Prefers a fresh phone snapshot over stored records for the handful of
@@ -21,7 +21,7 @@ class LiveVitalsResolver
     public function __construct(
         private readonly SnapshotClient $snapshot,
         private readonly RecordRepository $records,
-        private readonly DailyStepsMerger $stepsMerger,
+        private readonly DailyStepsConsolidator $stepsConsolidator,
     ) {
     }
 
@@ -73,9 +73,9 @@ class LiveVitalsResolver
         }
 
         $record = $this->records->createQueryBuilder('r')
-            ->andWhere('r.type = :type')
+            ->andWhere('r.type IN (:types)')
             ->andWhere('r.deleted = false')
-            ->setParameter('type', RecordType::HEART_RATE->value)
+            ->setParameter('types', RecordType::variants(RecordType::HEART_RATE->value))
             ->orderBy('r.startTime', 'DESC')
             ->setMaxResults(1)
             ->getQuery()
@@ -116,14 +116,15 @@ class LiveVitalsResolver
 
         // Summing every live Steps row double-counts when e.g. Samsung
         // Health's own daily rollup and Health Connect's phone-sensor
-        // bursts both cover the same window — DailyStepsMerger picks the
-        // winning dataOrigin tier (same rule the batch job uses to
-        // actually collapse the day to one row) and sums just that.
+        // bursts both cover the same window — DailyStepsConsolidator picks
+        // the winning dataOrigin tier (same rule the batch job uses to
+        // decide what to soft-delete) and sums just that, live, without
+        // needing that tier to have been consolidated in the DB yet.
         $records = $this->records->findByTypeSince(RecordType::STEPS->value, $startOfDayUtc);
 
         return [
             'source' => self::SOURCE_STORED_RECORDS,
-            'steps' => $this->stepsMerger->resolveDay($records)['total'],
+            'steps' => $this->stepsConsolidator->resolveDay($records)['total'],
         ];
     }
 

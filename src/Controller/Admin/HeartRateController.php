@@ -4,6 +4,7 @@ namespace App\Controller\Admin;
 
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
+use App\Service\Admin\SofiaDayRange;
 use EasyCorp\Bundle\EasyAdminBundle\Context\AdminContext;
 use EasyCorp\Bundle\EasyAdminBundle\Factory\AdminContextFactory;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -31,26 +32,27 @@ class HeartRateController extends AbstractController
             $request->attributes->set('ea', $adminContext);
         }
 
-        $dateStr = $request->query->get('date', date('Y-m-d'));
+        $sofiaTz = new \DateTimeZone(SofiaDayRange::TIMEZONE);
+        $dateStr = $request->query->get('date', (new \DateTimeImmutable('now', $sofiaTz))->format('Y-m-d'));
         $view = $request->query->get('view', 'D');
 
         try {
-            $baseDate = new \DateTimeImmutable($dateStr);
+            $baseDate = new \DateTimeImmutable($dateStr, $sofiaTz);
         } catch (\Exception) {
-            $baseDate = new \DateTimeImmutable();
+            $baseDate = new \DateTimeImmutable('now', $sofiaTz);
         }
 
-        [$startDate, $endDate, $dateDisplayString] = $this->calculateTimeRange($baseDate, $view);
+        [$startDate, $endDate, $dateDisplayString] = SofiaDayRange::forView($baseDate, $view);
 
         $prevDate = $this->calculateAdjacentDate($baseDate, $view, -1);
         $nextDate = $this->calculateAdjacentDate($baseDate, $view, 1);
 
         $records = $this->recordRepository->createQueryBuilder('r')
-            ->andWhere('r.type = :type')
+            ->andWhere('r.type IN (:types)')
             ->andWhere('r.startTime >= :startDate')
             ->andWhere('r.startTime <= :endDate')
             ->andWhere('r.deleted = false')
-            ->setParameter('type', RecordType::HEART_RATE->value)
+            ->setParameter('types', RecordType::variants(RecordType::HEART_RATE->value))
             ->setParameter('startDate', $startDate)
             ->setParameter('endDate', $endDate)
             ->orderBy('r.startTime', 'ASC')
@@ -103,30 +105,6 @@ class HeartRateController extends AbstractController
             default:
                 return $date->modify($modifier . '1 day');
         }
-    }
-
-    private function calculateTimeRange(\DateTimeImmutable $date, string $view): array
-    {
-        switch ($view) {
-            case 'W':
-                $start = $date->modify('monday this week')->setTime(0, 0, 0);
-                $end = $start->modify('+6 days')->setTime(23, 59, 59);
-                $display = sprintf('Week of %s', $start->format('M d, Y'));
-                break;
-            case 'M':
-                $start = $date->modify('first day of this month')->setTime(0, 0, 0);
-                $end = $date->modify('last day of this month')->setTime(23, 59, 59);
-                $display = $start->format('F Y');
-                break;
-            case 'D':
-            default:
-                $start = $date->setTime(0, 0, 0);
-                $end = $date->setTime(23, 59, 59);
-                $display = $start->format('F d, Y');
-                break;
-        }
-
-        return [$start, $end, $display];
     }
 
     private function calculateMetrics(array $bpmValues): array
