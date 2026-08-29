@@ -123,10 +123,10 @@ class PollBackdoorMessageHandlerTest extends TestCase
         $snapshot = $this->readState()['last_snapshot'];
         self::assertTrue($snapshot['screen']['on']);
         self::assertSame(43.22, $snapshot['location']['lat']);
-        self::assertSame('HomeNet', $snapshot['wifi_ssid']);
+        self::assertSame('HomeNet', $snapshot['connectivity']['wifi_ssid']);
         self::assertSame('walking', $snapshot['activity']['type']);
         self::assertSame(4231, $snapshot['activity']['steps_today']);
-        self::assertSame(78, $snapshot['band']['hr_bpm']);
+        self::assertSame(78, $snapshot['wearables']['band']['hr_bpm']);
     }
 
     public function testUnreachablePollPreservesThePreviousCachedSnapshot(): void
@@ -144,7 +144,7 @@ class PollBackdoorMessageHandlerTest extends TestCase
 
         $state = $this->readState();
         self::assertFalse($state['phone_reachable']);
-        self::assertSame(78, $state['last_snapshot']['band']['hr_bpm']);
+        self::assertSame(78, $state['last_snapshot']['wearables']['band']['hr_bpm']);
         self::assertSame($cachedAt, $state['last_snapshot']['cached_at']);
     }
 

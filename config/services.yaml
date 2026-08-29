@@ -37,6 +37,8 @@ services:
 
     App\MCP\Tools\CurrentStateTool:
         public: true
+
+    App\Service\CurrentState\CurrentStateResolver:
         arguments:
             $stateFile: '%kernel.project_dir%/var/breath_state.json'
 

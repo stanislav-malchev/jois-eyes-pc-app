@@ -1,0 +1,58 @@
+### JoisEyes PC service — plain-HTTP view of the current-state MCP tool
+###
+### GET /api/v1/current-state returns the exact same document as the
+### `current-state` MCP tool (App\MCP\Tools\CurrentStateTool / App\Service\
+### CurrentState\CurrentStateResolver) — the phone's entire /v1/snapshot
+### body (every section — meta, power, screen, dnd, location, activity,
+### environment, wearables, health_connect, connectivity, bt_devices),
+### untouched, with our decorations added alongside the raw fields
+### (server_time, verdict, location.place/source/note, screen.note,
+### activity.intensity/in_motion, band.hr_age_relative, bt_devices[].label/
+### note, ...). Nothing is chopped out or reshaped. Added 29.08.2026 so
+### Stan can poll it directly, the same way he already polls the phone's
+### own raw /v1/snapshot (see test_snapshot.http) — and see literally the
+### same thing an agent sees via MCP.
+###
+### Under /api/v1/*, not /v1/* — deliberately a different namespace from
+### the phone-sync contract routes (/v1/ingest, /v1/health, /v1/ping).
+###
+### This service runs on this same machine (see CLAUDE.md — port 9091, all
+### interfaces), so no tailnet host/environment indirection is needed here,
+### unlike test_snapshot.http's phone-on-the-tailnet setup.
+###
+### Always does one live read from the phone first (a real network call,
+### same as test_snapshot.http's plain GET /v1/snapshot) — falls back to
+### the last cached snapshot, then to stored records, only if the phone is
+### unreachable. No force_steps/force_hr params anymore; every call is live.
+
+### Default call.
+GET http://localhost:9091/api/v1/current-state
+
+> {%
+    client.test("status is 200", () => client.assert(response.status === 200));
+    client.test("server_time is first and in Europe/Sofia", () => {
+        const keys = Object.keys(response.body);
+        client.assert(keys[0] === "server_time", `expected server_time first, got ${keys[0]}`);
+        client.assert(response.body.server_time.timezone === "Europe/Sofia");
+    });
+    client.test("has our decoration keys alongside the raw snapshot", () => {
+        const b = response.body;
+        ["verdict", "last_activity", "looking_at_phone", "fallback"].forEach(key =>
+            client.assert(key in b, `missing key: ${key}`)
+        );
+    });
+    client.test("has the raw snapshot's sections too, not just decorations", () => {
+        const b = response.body;
+        ["meta", "power", "screen", "dnd", "location", "activity", "environment",
+         "wearables", "health_connect", "connectivity", "bt_devices"].forEach(key =>
+            client.assert(key in b, `missing raw section: ${key} — snapshot got chopped again`)
+        );
+    });
+%}
+
+### Unknown route — expect a normal Symfony 404, not this app's JSON shape.
+GET http://localhost:9091/api/v1/nonexistent-route
+
+> {%
+    client.test("status is 404", () => client.assert(response.status === 404));
+%}

@@ -3,13 +3,16 @@
 namespace App\Backdoor;
 
 /**
- * Trims a raw /v1/snapshot document down to the fields
- * App\MCP\Tools\CurrentStateTool needs, in one canonical shape shared by
- * both producers: App\Scheduler\PollBackdoorMessageHandler (the 3-min
- * cadence poll, written to var/breath_state.json's `last_snapshot`) and
- * CurrentStateTool's own on-demand `force_steps`/`force_hr` live fetch. One
- * mapping, so the cached-vs-live paths can never silently disagree about
- * which raw fields matter.
+ * Passes a raw /v1/snapshot document through untouched, just tagging it
+ * with when it was cached. Written by App\Scheduler\PollBackdoorMessageHandler
+ * (the 3-min cadence poll) into var/breath_state.json's `last_snapshot`, and
+ * read back by App\Service\CurrentState\CurrentStateResolver as its
+ * fallback source when a live phone read fails.
+ *
+ * Deliberately NOT a trim anymore (an earlier version reduced this to a
+ * handful of fields) — per Stan: the whole point is 100% of the snapshot,
+ * live or cached, is always what a caller sees, with our own decorations
+ * layered on top rather than a reshaped subset.
  */
 final class CachedSnapshot
 {
@@ -19,29 +22,6 @@ final class CachedSnapshot
      */
     public static function fromRaw(array $snapshot, \DateTimeImmutable $cachedAt): array
     {
-        return [
-            'cached_at' => $cachedAt->format(\DateTimeInterface::ATOM),
-            'screen' => [
-                'on' => $snapshot['screen']['on'] ?? null,
-                'last_unlocked_ts' => $snapshot['screen']['last_unlocked_ts'] ?? null,
-            ],
-            'location' => [
-                'ts' => $snapshot['location']['ts'] ?? null,
-                'lat' => $snapshot['location']['lat'] ?? null,
-                'lon' => $snapshot['location']['lon'] ?? null,
-                'accuracy_m' => $snapshot['location']['accuracy_m'] ?? null,
-            ],
-            'wifi_ssid' => $snapshot['connectivity']['wifi_ssid'] ?? null,
-            'activity' => [
-                'type' => $snapshot['activity']['type'] ?? null,
-                'steps_today' => $snapshot['activity']['steps_today'] ?? null,
-                'steps_ts' => $snapshot['activity']['steps_ts'] ?? null,
-            ],
-            'band' => [
-                'connected' => $snapshot['wearables']['band']['connected'] ?? null,
-                'hr_bpm' => $snapshot['wearables']['band']['hr_bpm'] ?? null,
-                'hr_ts' => $snapshot['wearables']['band']['hr_ts'] ?? null,
-            ],
-        ];
+        return ['cached_at' => $cachedAt->format(\DateTimeInterface::ATOM)] + $snapshot;
     }
 }
