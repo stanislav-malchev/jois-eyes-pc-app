@@ -78,9 +78,10 @@ class RecordRepository extends ServiceEntityRepository
     }
 
     /**
-     * All live rows whose type is one of $types, oldest first — the shape
-     * ConsolidationRunner needs to scan one canonical type's records for
-     * duplicates/overlaps.
+     * Every live row whose type is one of $types, oldest first — the
+     * whole-history candidate set ConsolidationEngine scans for
+     * duplicates/overlaps during a Phase-1 backlog pass
+     * (app:consolidate:records).
      *
      * @param string[] $types
      * @return Record[]
@@ -93,6 +94,47 @@ class RecordRepository extends ServiceEntityRepository
             ->setParameter('types', $types)
             ->orderBy('r.startTime', 'ASC')
             ->addOrderBy('r.id', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Live rows of $types whose startTime falls in [$from, $to] — the
+     * bounded "neighborhood" query ConsolidateMessageHandler uses instead
+     * of rescanning a whole type's history on every tick.
+     *
+     * @param string[] $types
+     * @return Record[]
+     */
+    public function findLiveByTypeInRange(array $types, \DateTimeImmutable $from, \DateTimeImmutable $to): array
+    {
+        return $this->createQueryBuilder('r')
+            ->andWhere('r.type IN (:types)')
+            ->andWhere('r.deleted = false')
+            ->andWhere('r.startTime >= :from')
+            ->andWhere('r.startTime <= :to')
+            ->setParameter('types', $types)
+            ->setParameter('from', $from)
+            ->setParameter('to', $to)
+            ->orderBy('r.startTime', 'ASC')
+            ->addOrderBy('r.id', 'ASC')
+            ->getQuery()
+            ->getResult();
+    }
+
+    /**
+     * Live rows synced since $cursor — what a scheduled consolidation tick
+     * needs to check against their neighbors, instead of every row ever.
+     *
+     * @return Record[]
+     */
+    public function findByReceivedAtAfter(\DateTimeImmutable $cursor): array
+    {
+        return $this->createQueryBuilder('r')
+            ->andWhere('r.receivedAt > :cursor')
+            ->andWhere('r.deleted = false')
+            ->setParameter('cursor', $cursor)
+            ->orderBy('r.receivedAt', 'ASC')
             ->getQuery()
             ->getResult();
     }

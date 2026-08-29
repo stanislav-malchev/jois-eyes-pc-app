@@ -5,7 +5,8 @@ namespace App\Command;
 use App\Entity\Record;
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
-use App\Service\Consolidation\OverlapResolver;
+use App\Service\Consolidation\ConsolidationEngine;
+use App\Service\Consolidation\DailyStepsMerger;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -16,20 +17,20 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 /**
  * Phase 1 of the "consolidation" plan (see LLM wiki concepts/consolidation.md):
  * a one-off backlog pass over the live `records` table, reviewed with
- * --dry-run before anything is actually deleted. Three passes, in order,
- * each one operating on what the previous pass left behind:
+ * --dry-run before anything is actually deleted.
  *
  *   1. Hard-delete deleted=true tombstones.
- *   2. Exact-duplicate purge: same canonical type + identical start_time
- *      (e.g. /v1/ingest retries re-posting a LocationFix under a fresh
- *      recordUid) — keep the richer payload, tie-break lowest id.
- *   3. Overlap resolution via OverlapResolver: same canonical type,
- *      time-overlapping but not identical — resolved by dataOrigin
- *      priority, then by sample-array subset, never by summing/averaging.
- *      Anything neither rule can decide is left alone and reported.
+ *   2. Steps: DailyStepsMerger collapses each calendar day to one row
+ *      (Health Connect's own total when present, otherwise whatever's
+ *      there), per Stan's 29.08.2026 correction — see that class.
+ *   3. Every other type: ConsolidationEngine (exact-duplicate purge, then
+ *      dataOrigin-priority/subset overlap resolution — never summing across
+ *      apps). Anything neither rule can decide is left alone and reported.
  *
- * Phase 2 (a recurring `ConsolidationSchedule` job) is not built yet — see
- * the wiki doc's "Proposed shape" for that.
+ * Phase 2 (the recurring ConsolidationSchedule job, App\Scheduler\
+ * ConsolidateMessageHandler) reuses the same services against a much
+ * smaller, time-windowed candidate set instead of rescanning everything on
+ * every tick — see that class for why a full rescan isn't repeated there.
  */
 #[AsCommand(
     name: 'app:consolidate:records',
@@ -37,9 +38,12 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 )]
 class ConsolidateRecordsCommand extends Command
 {
+    private const STEPS_CANONICAL_TYPE = 'Steps';
+
     public function __construct(
         private readonly RecordRepository $records,
-        private readonly OverlapResolver $overlaps,
+        private readonly ConsolidationEngine $engine,
+        private readonly DailyStepsMerger $stepsMerger,
     ) {
         parent::__construct();
     }
@@ -55,14 +59,31 @@ class ConsolidateRecordsCommand extends Command
         $dryRun = (bool) $input->getOption('dry-run');
         $io->title($dryRun ? 'Consolidate records (dry run)' : 'Consolidate records');
 
-        $tombstones = $this->consolidateTombstones($dryRun);
+        $tombstones = $dryRun ? $this->records->countDeleted() : $this->records->hardDeleteTombstones();
         $io->writeln(sprintf('Tombstones: %d %s', $tombstones, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
 
-        [$dupeIds, $canonicalTypes] = $this->consolidateExactDuplicates($dryRun);
-        $io->writeln(sprintf('Exact duplicates: %d %s', count($dupeIds), $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
+        $stepsRemoved = $this->consolidateSteps($dryRun);
+        $io->writeln(sprintf('Steps daily merge: %d row(s) %s', $stepsRemoved, $dryRun ? 'would be removed' : 'removed'));
 
-        [$overlapDrops, $flaggedGroups] = $this->consolidateOverlaps($dryRun, $canonicalTypes, $dupeIds);
-        $io->writeln(sprintf('Overlap losers: %d %s', $overlapDrops, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
+        $exactDupeCount = 0;
+        $overlapCount = 0;
+        $flaggedGroups = [];
+
+        foreach ($this->canonicalTypesPresent() as $canonicalType) {
+            if ($canonicalType === self::STEPS_CANONICAL_TYPE) {
+                continue;
+            }
+
+            $records = $this->records->findLiveByTypeIn(RecordType::variants($canonicalType));
+            $result = $this->engine->consolidateBucket($records, $dryRun);
+
+            $exactDupeCount += count($result['exactDuplicateIds']);
+            $overlapCount += count($result['overlapIds']);
+            array_push($flaggedGroups, ...$result['flagged']);
+        }
+
+        $io->writeln(sprintf('Exact duplicates: %d %s', $exactDupeCount, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
+        $io->writeln(sprintf('Overlap losers: %d %s', $overlapCount, $dryRun ? 'would be hard-deleted' : 'hard-deleted'));
 
         if ($flaggedGroups !== []) {
             $io->section(sprintf('%d overlapping group(s) left unresolved (equal priority, not a subset of each other) — needs manual review', count($flaggedGroups)));
@@ -87,81 +108,15 @@ class ConsolidateRecordsCommand extends Command
         return Command::SUCCESS;
     }
 
-    private function consolidateTombstones(bool $dryRun): int
+    private function consolidateSteps(bool $dryRun): int
     {
-        if ($dryRun) {
-            return $this->records->countDeleted();
+        $records = $this->records->findLiveByTypeIn(RecordType::variants(self::STEPS_CANONICAL_TYPE));
+        $removed = 0;
+        foreach ($this->stepsMerger->groupByCalendarDay($records) as $dayRecords) {
+            $removed += count($this->stepsMerger->mergeDay($dayRecords, $dryRun));
         }
 
-        return $this->records->hardDeleteTombstones();
-    }
-
-    /**
-     * @return array{0: int[], 1: string[]} [ids removed (or that would be), canonical types touched]
-     */
-    private function consolidateExactDuplicates(bool $dryRun): array
-    {
-        $canonicalTypes = $this->canonicalTypesPresent();
-        $toDelete = [];
-
-        foreach ($canonicalTypes as $canonicalType) {
-            $records = $this->records->findLiveByTypeIn(RecordType::variants($canonicalType));
-
-            $byStartTime = [];
-            foreach ($records as $record) {
-                $byStartTime[$record->getStartTime()->format(\DateTimeInterface::ATOM)][] = $record;
-            }
-
-            foreach ($byStartTime as $group) {
-                if (count($group) < 2) {
-                    continue;
-                }
-                usort($group, static fn (Record $a, Record $b) => self::richness($b) <=> self::richness($a) ?: $a->getId() <=> $b->getId());
-                array_shift($group); // keep the richest / lowest-id row
-                foreach ($group as $loser) {
-                    $toDelete[] = $loser->getId();
-                }
-            }
-        }
-
-        if (!$dryRun && $toDelete !== []) {
-            $this->records->hardDeleteByIds($toDelete);
-        }
-
-        return [$toDelete, $canonicalTypes];
-    }
-
-    /**
-     * $excludeIds are rows the exact-duplicate pass already decided to
-     * remove — excluded here too (even in dry-run, where they're still
-     * physically in the DB) so the overlap pass reports what would happen
-     * to what's left *after* deduping, matching a real (non-dry) run.
-     *
-     * @param string[] $canonicalTypes
-     * @param int[] $excludeIds
-     * @return array{0: int, 1: Record[][]} [deleted count, flagged groups]
-     */
-    private function consolidateOverlaps(bool $dryRun, array $canonicalTypes, array $excludeIds): array
-    {
-        $toDelete = [];
-        $flagged = [];
-
-        foreach ($canonicalTypes as $canonicalType) {
-            $records = $this->records->findLiveByTypeIn(RecordType::variants($canonicalType));
-            $records = array_values(array_filter($records, static fn (Record $r) => !in_array($r->getId(), $excludeIds, true)));
-            $resolution = $this->overlaps->resolve($records);
-
-            foreach ($resolution['drop'] as $loser) {
-                $toDelete[] = $loser->getId();
-            }
-            array_push($flagged, ...$resolution['flagged']);
-        }
-
-        if (!$dryRun && $toDelete !== []) {
-            $this->records->hardDeleteByIds($toDelete);
-        }
-
-        return [count($toDelete), $flagged];
+        return $removed;
     }
 
     /**
@@ -173,10 +128,5 @@ class ConsolidateRecordsCommand extends Command
         $canonical = array_map(RecordType::canonicalize(...), $types);
 
         return array_values(array_unique($canonical));
-    }
-
-    private static function richness(Record $record): int
-    {
-        return count(array_filter($record->getPayload(), static fn ($v) => $v !== null && $v !== '' && $v !== []));
     }
 }

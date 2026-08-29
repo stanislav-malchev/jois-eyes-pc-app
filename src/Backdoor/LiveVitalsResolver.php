@@ -4,7 +4,7 @@ namespace App\Backdoor;
 
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
-use App\Service\Consolidation\OverlapResolver;
+use App\Service\Consolidation\DailyStepsMerger;
 
 /**
  * Prefers a fresh phone snapshot over stored records for the handful of
@@ -21,7 +21,7 @@ class LiveVitalsResolver
     public function __construct(
         private readonly SnapshotClient $snapshot,
         private readonly RecordRepository $records,
-        private readonly OverlapResolver $overlaps,
+        private readonly DailyStepsMerger $stepsMerger,
     ) {
     }
 
@@ -116,18 +116,14 @@ class LiveVitalsResolver
 
         // Summing every live Steps row double-counts when e.g. Samsung
         // Health's own daily rollup and Health Connect's phone-sensor
-        // bursts both cover the same window — resolve overlaps first.
+        // bursts both cover the same window — DailyStepsMerger picks the
+        // winning dataOrigin tier (same rule the batch job uses to
+        // actually collapse the day to one row) and sums just that.
         $records = $this->records->findByTypeSince(RecordType::STEPS->value, $startOfDayUtc);
-        $resolved = $this->overlaps->resolve($records)['keep'];
-
-        $steps = 0;
-        foreach ($resolved as $record) {
-            $steps += (int) ($record->getPayload()['count'] ?? 0);
-        }
 
         return [
             'source' => self::SOURCE_STORED_RECORDS,
-            'steps' => $steps,
+            'steps' => $this->stepsMerger->resolveDay($records)['total'],
         ];
     }
 

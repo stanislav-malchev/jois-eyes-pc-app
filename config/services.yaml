@@ -10,6 +10,7 @@ parameters:
     app.home_latitude: '%env(float:HOME_LATITUDE)%'
     app.home_longitude: '%env(float:HOME_LONGITUDE)%'
     app.phone_backdoor_url: '%env(PHONE_BACKDOOR_URL)%'
+    app.consolidation_live_deletes: '%env(bool:CONSOLIDATION_LIVE_DELETES)%'
 
 services:
     # default configuration for services in *this* file
@@ -33,6 +34,12 @@ services:
         arguments:
             $stateFile: '%kernel.project_dir%/var/breath_state.json'
             $logFile: '%kernel.project_dir%/var/log/breath.log'
+
+    App\Scheduler\ConsolidateMessageHandler:
+        arguments:
+            $liveDeletes: '%app.consolidation_live_deletes%'
+            $stateFile: '%kernel.project_dir%/var/consolidation_state.json'
+            $logFile: '%kernel.project_dir%/var/log/consolidation.log'
 
     # MCP tools are resolved by class name at runtime (KLP\KlpMcpServer\Services\ToolService\ToolRepository),
     # not wired in via a constructor Reference — mark them public so the container doesn't optimize them away.

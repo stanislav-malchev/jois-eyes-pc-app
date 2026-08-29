@@ -7,6 +7,12 @@ use App\Service\Consolidation\DataOriginPriority;
 use App\Service\Consolidation\OverlapResolver;
 use PHPUnit\Framework\TestCase;
 
+/**
+ * OverlapResolver backs HeartRate/OxygenSaturation-style sample-array
+ * types, where "keep the winning row(s), drop the rest" is the right
+ * model. Steps is handled separately by DailyStepsMerger (always collapses
+ * to one row per day) — see DailyStepsMergerTest for that behavior.
+ */
 class OverlapResolverTest extends TestCase
 {
     private OverlapResolver $resolver;
@@ -30,13 +36,19 @@ class OverlapResolverTest extends TestCase
 
     public function testHealthConnectWinsOverOverlappingOtherApp(): void
     {
-        $samsungRollup = $this->record(1, '2026-08-29T00:00:00Z', '2026-08-29T23:00:00Z', ['count' => 9455, 'dataOrigin' => 'com.sec.android.app.shealth']);
-        $healthConnectBurst = $this->record(2, '2026-08-29T01:00:00Z', '2026-08-29T02:00:00Z', ['count' => 500, 'dataOrigin' => 'com.android.healthconnect.phone.sensor']);
+        $samsungReading = $this->record(1, '2026-08-29T00:00:00Z', '2026-08-29T01:00:00Z', [
+            'dataOrigin' => 'com.sec.android.app.shealth',
+            'samples' => [['time' => 't1', 'beatsPerMinute' => 58]],
+        ]);
+        $healthConnectReading = $this->record(2, '2026-08-29T00:15:00Z', '2026-08-29T00:45:00Z', [
+            'dataOrigin' => 'com.android.healthconnect.phone.sensor',
+            'samples' => [['time' => 't2', 'beatsPerMinute' => 61]],
+        ]);
 
-        $result = $this->resolver->resolve([$samsungRollup, $healthConnectBurst]);
+        $result = $this->resolver->resolve([$samsungReading, $healthConnectReading]);
 
-        self::assertSame([$healthConnectBurst], $result['keep']);
-        self::assertSame([$samsungRollup], $result['drop']);
+        self::assertSame([$healthConnectReading], $result['keep']);
+        self::assertSame([$samsungReading], $result['drop']);
         self::assertSame([], $result['flagged']);
     }
 
@@ -72,8 +84,14 @@ class OverlapResolverTest extends TestCase
 
     public function testEqualPriorityNonSubsetOverlapIsFlaggedAndKeptNotMerged(): void
     {
-        $appA = $this->record(1, '2026-08-29T00:00:00Z', '2026-08-29T01:00:00Z', ['count' => 100, 'dataOrigin' => 'com.example.fitness_a']);
-        $appB = $this->record(2, '2026-08-29T00:30:00Z', '2026-08-29T01:30:00Z', ['count' => 80, 'dataOrigin' => 'com.example.fitness_b']);
+        $appA = $this->record(1, '2026-08-29T00:00:00Z', '2026-08-29T01:00:00Z', [
+            'dataOrigin' => 'com.example.fitness_a',
+            'samples' => [['time' => 't1', 'beatsPerMinute' => 70]],
+        ]);
+        $appB = $this->record(2, '2026-08-29T00:30:00Z', '2026-08-29T01:30:00Z', [
+            'dataOrigin' => 'com.example.fitness_b',
+            'samples' => [['time' => 't2', 'beatsPerMinute' => 75]],
+        ]);
 
         $result = $this->resolver->resolve([$appA, $appB]);
 
@@ -87,7 +105,7 @@ class OverlapResolverTest extends TestCase
     {
         $record = new Record('rec-'.$id);
         $record
-            ->setType('StepsRecord')
+            ->setType('HeartRateRecord')
             ->setSource('health_connect')
             ->setStartTime(new \DateTimeImmutable($start))
             ->setEndTime($end !== null ? new \DateTimeImmutable($end) : null)
