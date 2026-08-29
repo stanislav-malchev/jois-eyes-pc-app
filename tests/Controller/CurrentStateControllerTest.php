@@ -9,11 +9,11 @@ use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
  * Structural smoke test only, deliberately not asserting specific values:
  * this route always attempts a live phone read first (see
  * App\Service\CurrentState\CurrentStateResolver), which isn't reachable
- * from a test run — it'll fall through to the real var/breath_state.json
- * cache or the DB, whichever this machine actually has, not something
- * this test controls. App\Tests\Service\CurrentState\
- * CurrentStateResolverTest exercises the actual logic against mocked/
- * controlled inputs.
+ * from a test run — it'll fall straight through to the DB fallback branch
+ * (there's no intermediate cache anymore — see that class's docblock),
+ * whatever this machine's real DB actually has, not something this test
+ * controls. App\Tests\Service\CurrentState\CurrentStateResolverTest
+ * exercises the actual logic against mocked/controlled inputs.
  */
 class CurrentStateControllerTest extends WebTestCase
 {

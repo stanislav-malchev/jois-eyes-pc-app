@@ -24,13 +24,6 @@ klp_mcp_server:
 
     tools:
         - App\MCP\Tools\CurrentStateTool
-        - App\MCP\Tools\DailyVitalsSummaryTool
-        - App\MCP\Tools\LocationContextTool
-        - App\MCP\Tools\GetLastLocationTool
-        - App\MCP\Tools\GetLastHeartRateTool
-        - App\MCP\Tools\GetLastDayStepsTool
-        - App\MCP\Tools\GetLastNightSleepTool
-        - App\MCP\Tools\GetCurrentPlaceTool
 
     prompts: []
 

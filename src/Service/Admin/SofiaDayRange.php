@@ -10,8 +10,9 @@ namespace App\Service\Admin;
  * starts at 21:00 UTC the *previous* day (to span one Europe/Sofia calendar
  * day) — so asking for "Aug 28" matched zero rows; that row's UTC
  * timestamp falls on the 27th. Every other day-boundary computation in this
- * app (DailyStepsConsolidator, GetLastDayStepsTool, DailyVitalsSummaryTool)
- * already uses Europe/Sofia; this brings the admin views in line.
+ * app (DailyStepsConsolidator, GetLastDayStepsTool,
+ * CurrentStateResolver::averageHeartRateToday()) already uses Europe/Sofia;
+ * this brings the admin views in line.
  */
 final class SofiaDayRange
 {

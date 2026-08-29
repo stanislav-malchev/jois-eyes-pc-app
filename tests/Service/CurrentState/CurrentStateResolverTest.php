@@ -14,6 +14,7 @@ use App\Repository\RecordRepository;
 use App\Service\Consolidation\DailyStepsConsolidator;
 use App\Service\Consolidation\DataOriginPriority;
 use App\Service\CurrentState\CurrentStateResolver;
+use App\Service\Normalization\RecordMetricsExtractor;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -21,11 +22,12 @@ use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
 
 /**
- * `resolve()` always attempts a live phone read first now (see the
- * resolver's own docblock) — so most cases here mock the HTTP client's
- * live snapshot response directly, rather than pre-seeding a cache file.
- * The cache-fallback and DB-only-fallback tests deliberately make the
- * live call fail (connection refused) to exercise those branches.
+ * `resolve()` always attempts a live phone read first (see the resolver's
+ * own docblock) — so most cases here mock the HTTP client's live snapshot
+ * response directly. There is no cache layer anymore (the-breath's
+ * cadence poller was retired 29.08.2026) — the DB-only-fallback tests
+ * deliberately make the live call fail (connection refused) to exercise
+ * that branch directly.
  */
 class CurrentStateResolverTest extends KernelTestCase
 {
@@ -34,7 +36,6 @@ class CurrentStateResolverTest extends KernelTestCase
     private NamedLocationRepository $namedLocations;
     private NamedBluetoothDeviceRepository $namedBluetoothDevices;
     private NamedNetworkRepository $namedNetworks;
-    private string $stateFile;
 
     protected function setUp(): void
     {
@@ -49,14 +50,6 @@ class CurrentStateResolverTest extends KernelTestCase
         $metadata = $this->em->getMetadataFactory()->getAllMetadata();
         $schemaTool->dropSchema($metadata);
         $schemaTool->createSchema($metadata);
-
-        $this->stateFile = tempnam(sys_get_temp_dir(), 'current_state_');
-        @unlink($this->stateFile);
-    }
-
-    protected function tearDown(): void
-    {
-        @unlink($this->stateFile);
     }
 
     public function testLiveSnapshotIsReturnedWholeWithRawSectionsIntact(): void
@@ -90,6 +83,7 @@ class CurrentStateResolverTest extends KernelTestCase
 
         // Decorations layered alongside, not instead of, the raw fields.
         self::assertSame('live', $data['verdict']);
+        self::assertSame('live', $data['source']);
         self::assertSame('likely', $data['looking_at_phone']);
         self::assertSame('Home', $data['location']['place']);
         self::assertSame('geofence', $data['location']['source']);
@@ -168,47 +162,144 @@ class CurrentStateResolverTest extends KernelTestCase
         self::assertTrue($data['activity']['in_motion']);
     }
 
-    public function testUnreachablePhoneFallsBackToCachedSnapshot(): void
+    public function testAvgHrTodayIsWeightedAverageOfTodaysHeartRateRecords(): void
     {
+        // Anchored to Europe/Sofia's midnight, not PHP's default-timezone
+        // (UTC) "today" — averageHeartRateToday() computes its day
+        // boundary in Sofia terms, and the two disagree for a few hours
+        // every night (Sofia is UTC+2/+3, so its midnight is still
+        // "yesterday" in UTC).
+        $today = new \DateTimeImmutable('today', new \DateTimeZone('Europe/Sofia'));
+        $this->insertHeartRateRecord(60, $today->modify('+1 hour'));
+        $this->insertHeartRateRecord(100, $today->modify('+2 hours'));
+
         $nowMs = (int) (microtime(true) * 1000);
-        $this->writeCache([
+        $httpClient = $this->httpClientForSnapshot([
             'screen' => ['on' => false, 'last_unlocked_ts' => null],
             'location' => ['ts' => $nowMs - 30_000, 'lat' => 43.225433, 'lon' => 28.000841, 'accuracy_m' => 8.0],
             'activity' => ['type' => 'stationary', 'steps_today' => 0, 'steps_ts' => $nowMs - 30_000],
-            'wearables' => ['band' => ['connected' => false, 'hr_bpm' => 60, 'hr_ts' => $nowMs - 30_000]],
+            'wearables' => ['band' => ['connected' => true, 'hr_bpm' => 72, 'hr_ts' => $nowMs - 30_000]],
         ]);
-        $unreachable = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
 
-        $data = $this->resolver($unreachable)->resolve();
+        $data = $this->resolver($httpClient)->resolve();
 
-        self::assertSame(60, $data['wearables']['band']['hr_bpm']);
-        self::assertSame('live', $data['verdict']);
-        self::assertNull($data['fallback']);
+        self::assertSame(72, $data['wearables']['band']['hr_bpm']); // the live reading, untouched
+        self::assertSame(80, $data['wearables']['band']['avg_hr_today']); // (60+100)/2
     }
 
-    public function testNoCacheFallsBackToDbAndReportsLastAutoSync(): void
+    public function testAvgHrTodayIsNullWithNoHeartRateRecordsTodayAndPresentOnDbOnlyFallbackToo(): void
+    {
+        $nowMs = (int) (microtime(true) * 1000);
+        $httpClient = $this->httpClientForSnapshot([
+            'screen' => ['on' => false, 'last_unlocked_ts' => null],
+            'location' => ['ts' => $nowMs - 30_000, 'lat' => 43.225433, 'lon' => 28.000841, 'accuracy_m' => 8.0],
+            'activity' => ['type' => 'stationary', 'steps_today' => 0, 'steps_ts' => $nowMs - 30_000],
+            'wearables' => ['band' => ['connected' => false, 'hr_bpm' => null, 'hr_ts' => null]],
+        ]);
+        $data = $this->resolver($httpClient)->resolve();
+        self::assertNull($data['wearables']['band']['avg_hr_today']);
+
+        $this->insertHeartRateRecord(90, new \DateTimeImmutable('today +3 hours', new \DateTimeZone('Europe/Sofia')));
+        $unreachable = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
+        $dbOnlyData = $this->resolver($unreachable)->resolve();
+        self::assertSame('db', $dbOnlyData['source']);
+        self::assertSame(90, $dbOnlyData['wearables']['band']['avg_hr_today']);
+    }
+
+    public function testSleepIsPresentAndIdenticalOnBothLiveAndDbOnlyBranches(): void
+    {
+        $start = new \DateTimeImmutable('-9 hours');
+        $end = new \DateTimeImmutable('-2 hours');
+        $this->insertSleepRecord($start, $end, [
+            ['startTime' => $start, 'endTime' => $start->modify('+3 hours'), 'stage' => 'light'],
+            ['startTime' => $start->modify('+3 hours'), 'endTime' => $end, 'stage' => 'deep'],
+        ]);
+
+        $nowMs = (int) (microtime(true) * 1000);
+        $httpClient = $this->httpClientForSnapshot([
+            'screen' => ['on' => false, 'last_unlocked_ts' => null],
+            'location' => ['ts' => $nowMs - 30_000, 'lat' => 43.225433, 'lon' => 28.000841, 'accuracy_m' => 8.0],
+            'activity' => ['type' => 'stationary', 'steps_today' => 0, 'steps_ts' => $nowMs - 30_000],
+            'wearables' => ['band' => ['connected' => false, 'hr_bpm' => null, 'hr_ts' => null]],
+        ]);
+        $data = $this->resolver($httpClient)->resolve();
+
+        self::assertSame('live', $data['source']);
+        self::assertSame(420, $data['sleep']['duration_minutes']); // 7 hours
+        self::assertSame('7h 0m', $data['sleep']['duration_formatted']);
+        self::assertSame(['light' => 180, 'deep' => 240], $data['sleep']['stages_minutes']);
+        self::assertSame('2h 0m ago', $data['sleep']['ended_relative']);
+
+        $unreachable = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
+        $dbOnlyData = $this->resolver($unreachable)->resolve();
+
+        self::assertSame('db', $dbOnlyData['source']);
+        self::assertSame($data['sleep'], $dbOnlyData['sleep']);
+    }
+
+    public function testSleepFieldsAreAllNullWhenNoSleepRecordExists(): void
+    {
+        $httpClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
+
+        $data = $this->resolver($httpClient)->resolve();
+
+        self::assertNull($data['sleep']['start_time']);
+        self::assertNull($data['sleep']['end_time']);
+        self::assertNull($data['sleep']['duration_minutes']);
+        self::assertNull($data['sleep']['duration_formatted']);
+        self::assertNull($data['sleep']['stages_minutes']);
+        self::assertNull($data['sleep']['ended_relative']);
+    }
+
+    public function testUnreachablePhoneFallsBackToDbAndReportsLastAutoSync(): void
     {
         $this->insertHeartRateRecord(72, new \DateTimeImmutable('-10 minutes'));
 
         $httpClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
-        // No cache file at all (fresh install scenario).
         $data = $this->resolver($httpClient)->resolve();
 
         self::assertContains($data['verdict'], ['stale', 'live', 'recent']);
         self::assertSame(72, $data['wearables']['band']['hr_bpm']);
+        self::assertSame('db', $data['source']);
         self::assertNotNull($data['fallback']);
         self::assertSame('no live data', $data['fallback']['reason']);
     }
 
-    public function testNoCacheAndEmptyDbYieldsBlindWithNullFallback(): void
+    public function testUnreachablePhoneAndEmptyDbYieldsBlindWithNullFallback(): void
     {
         $httpClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
 
         $data = $this->resolver($httpClient)->resolve();
 
         self::assertSame('blind', $data['verdict']);
+        self::assertSame('db', $data['source']);
         self::assertSame('unknown', $data['looking_at_phone']);
         self::assertNull($data['fallback']['last_auto_sync']);
+    }
+
+    public function testFetchesFreshSensorDataViaGpsFixAndBtScanQueryParams(): void
+    {
+        $nowMs = (int) (microtime(true) * 1000);
+        $snapshot = json_encode([
+            'api_version' => 1,
+            'screen' => ['on' => false, 'last_unlocked_ts' => null],
+            'location' => ['ts' => $nowMs - 30_000, 'lat' => 43.225433, 'lon' => 28.000841, 'accuracy_m' => 8.0],
+            'activity' => ['type' => 'stationary', 'steps_today' => 0, 'steps_ts' => $nowMs - 30_000],
+            'wearables' => ['band' => ['connected' => false, 'hr_bpm' => null, 'hr_ts' => null]],
+        ]);
+        $requestedQuery = null;
+        $httpClient = new MockHttpClient(function (string $method, string $url) use ($snapshot, &$requestedQuery) {
+            $requestedQuery = parse_url($url, \PHP_URL_QUERY);
+
+            return new MockResponse($snapshot);
+        });
+
+        $this->resolver($httpClient)->resolve();
+
+        self::assertNotNull($requestedQuery);
+        parse_str($requestedQuery, $params);
+        self::assertSame('fix', $params['gps'] ?? null);
+        self::assertSame('scan', $params['bt'] ?? null);
     }
 
     public function testServerTimeIsAlwaysFirstAndInSofiaTimezone(): void
@@ -406,7 +497,6 @@ class CurrentStateResolverTest extends KernelTestCase
             $this->namedLocations,
             $this->namedBluetoothDevices,
             $this->namedNetworks,
-            $this->stateFile,
         );
     }
 
@@ -439,21 +529,6 @@ class CurrentStateResolverTest extends KernelTestCase
         $this->em->flush();
     }
 
-    /**
-     * @param array<string, mixed> $lastSnapshot
-     */
-    private function writeCache(array $lastSnapshot): void
-    {
-        file_put_contents($this->stateFile, json_encode([
-            'polled_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM),
-            'phone_reachable' => true,
-            'health_connect_age_seconds' => 60,
-            'health_connect_dead' => false,
-            'last_action' => 'none',
-            'last_snapshot' => ['cached_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM)] + $lastSnapshot + ['api_version' => 1],
-        ]));
-    }
-
     private function insertHome(?string $wifiSsid = null): void
     {
         $this->insertNamedLocation('Home', 43.225433, 28.000841, 1000, $wifiSsid);
@@ -473,7 +548,7 @@ class CurrentStateResolverTest extends KernelTestCase
 
     private function insertHeartRateRecord(int $bpm, \DateTimeImmutable $time): void
     {
-        $this->records->upsertByRecordUid(
+        $record = $this->records->upsertByRecordUid(
             'hr-'.$time->getTimestamp(),
             'health_connect',
             'HeartRate',
@@ -483,6 +558,37 @@ class CurrentStateResolverTest extends KernelTestCase
             $time,
             false,
             ['samples' => [['time' => $time->format(\DateTimeInterface::ATOM), 'beatsPerMinute' => $bpm]], 'dataOrigin' => 'com.android.healthconnect'],
+        );
+        // averageHeartRateToday() reads the denormalized metric-cache
+        // columns (RecordMetricsExtractor), not the raw payload directly.
+        (new RecordMetricsExtractor())->extract($record);
+        $this->em->flush();
+    }
+
+    /**
+     * @param array<int, array{startTime: \DateTimeImmutable, endTime: \DateTimeImmutable, stage: string}> $stages
+     */
+    private function insertSleepRecord(\DateTimeImmutable $start, \DateTimeImmutable $end, array $stages): void
+    {
+        $this->records->upsertByRecordUid(
+            'sleep-'.$start->getTimestamp(),
+            'health_connect',
+            'SleepSessionRecord',
+            $start,
+            $end,
+            $end,
+            $end,
+            false,
+            [
+                'startTime' => $start->format(\DateTimeInterface::ATOM),
+                'endTime' => $end->format(\DateTimeInterface::ATOM),
+                'stages' => array_map(static fn (array $s) => [
+                    'startTime' => $s['startTime']->format(\DateTimeInterface::ATOM),
+                    'endTime' => $s['endTime']->format(\DateTimeInterface::ATOM),
+                    'stage' => $s['stage'],
+                ], $stages),
+                'dataOrigin' => 'com.android.healthconnect',
+            ],
         );
         $this->em->flush();
     }

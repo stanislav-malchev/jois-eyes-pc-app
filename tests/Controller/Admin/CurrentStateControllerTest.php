@@ -10,8 +10,8 @@ use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
  * App\Tests\Controller\CurrentStateControllerTest: this page always
  * attempts a live phone read first (via the same App\Service\
  * CurrentState\CurrentStateResolver), which isn't reachable from a test
- * run, so it'll fall through to whatever this machine's real cache/DB
- * state actually is.
+ * run, so it'll fall straight through to the DB fallback branch, whatever
+ * this machine's real DB state actually is.
  */
 class CurrentStateControllerTest extends WebTestCase
 {

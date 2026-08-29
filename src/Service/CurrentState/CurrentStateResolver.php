@@ -2,11 +2,11 @@
 
 namespace App\Service\CurrentState;
 
-use App\Backdoor\CachedSnapshot;
 use App\Backdoor\LiveVitalsResolver;
 use App\Backdoor\SnapshotClient;
 use App\Entity\NamedBluetoothDevice;
 use App\Entity\NamedLocation;
+use App\Enum\RecordType;
 use App\Repository\NamedBluetoothDeviceRepository;
 use App\Repository\NamedLocationRepository;
 use App\Repository\NamedNetworkRepository;
@@ -29,29 +29,47 @@ use Location\Distance\Haversine;
  * environment, wearables, health_connect, connectivity, bt_devices) with
  * our own decorations layered *into* it — new keys added alongside the
  * raw ones (`location.note`, `screen.note`, `bt_devices[].label`,
- * `connectivity.wifi_label`, etc.), nothing ever removed, renamed, or
- * reshaped.
+ * `connectivity.wifi_label`, `wearables.band.avg_hr_today` — folded in
+ * 29.08.2026 from the retired `daily-vitals-summary` MCP tool, the one
+ * thing it did that a live/last-known `hr_bpm` reading can't, see
+ * averageHeartRateToday() — etc.), nothing ever removed, renamed, or
+ * reshaped. `source` (`"live"|"db"`) says which of the two branches below
+ * actually answered — added after Stan saw a `stale` verdict on a call
+ * he'd just made and (reasonably) asked whether it was cached; it wasn't
+ * (there's no cache anymore at all — see below), but there was no way to
+ * *see* that before `source` existed. `verdict` still judges freshness
+ * independently of `source` — a `"live"` `source` with a `stale` `verdict`
+ * is normal, not a contradiction; see the field derivation notes below.
  *
- * Data source priority:
- *   1. Live — always attempted first, unconditionally (a real
- *      SnapshotClient::fetch() call to the phone, every single call; no
- *      more cache-by-default/force-flag distinction — simpler, and
- *      guarantees this always reflects the exact same data a manual
- *      /v1/snapshot poll would. Known trade-off, deliberate for now: this
- *      wakes the phone's radio on every call, unlike the previous
- *      cached-breath-by-default design.
- *   2. Cached breath — only when the live call fails (phone asleep/tailnet
- *      down/rate-limited): the last full raw snapshot
- *      App\Scheduler\PollBackdoorMessageHandler cached in
- *      var/breath_state.json, via the (now pass-through, not trimming)
- *      App\Backdoor\CachedSnapshot mapper.
- *   3. joiseyes DB — only when there is no cache at all (fresh install, or
- *      the daemon's been down since before this process started). Falls
- *      back to App\Backdoor\LiveVitalsResolver for location/heart
- *      rate/steps (itself live-then-DB) and RecordRepository::
- *      latestReceivedAt() for `fallback.last_auto_sync`. Necessarily a
- *      reduced, synthetic shape here — there is no real snapshot document
- *      to reflect when this branch is reached.
+ * Data source priority — rebuilt again 29.08.2026, retiring [[the-breath]]
+ * entirely (its Symfony Scheduler/Messenger worker, `joiseyes-breath.service`,
+ * and its `var/breath_state.json` cache): per Stan, that PC-side cadence
+ * poller had become pointless once every consumer either wants an
+ * on-demand live read (this resolver) or the phone's own 15-min WorkManager
+ * archival sync (unrelated to this tool) — there was no longer a real job
+ * left for a 3rd, in-between "keep a warm cache" poller to do, and Stan
+ * explicitly doesn't want us nudging the phone to sync any more often than
+ * its own 15-min floor:
+ *   1. Live — always attempted first, unconditionally: a real
+ *      SnapshotClient::fetchFresh() call to the phone (`gps=fix`+`bt=scan`,
+ *      forcing a real sensor read instead of last-known values), every
+ *      single call. Known trade-off, deliberate: this wakes the phone's
+ *      radio *and* forces a GPS fix on every call. **`source: "live"`
+ *      still doesn't mean every field is fresh** —
+ *      `activity.steps_today`/`wearables.band.hr_bpm` have no on-demand
+ *      "force" param at all (only location/BT do); they're always
+ *      whatever the phone app already has in memory, live call or not.
+ *   2. joiseyes DB — only when the live call fails (phone asleep, tailnet
+ *      down, rate-limited — there is no intermediate cache to fall back to
+ *      first anymore). Falls back to App\Backdoor\LiveVitalsResolver for
+ *      location/heart rate/steps (itself live-then-DB) and
+ *      RecordRepository::latestReceivedAt() for `fallback.last_auto_sync`.
+ *      **A completely different, reduced, synthetic shape** — there is no
+ *      raw snapshot document to reflect when this branch is reached, so
+ *      most raw sections (power/dnd/environment/health_connect/
+ *      connectivity/bt_devices/screen/activity.type) are simply absent,
+ *      honestly, not guessed. Callers must not assume this shape matches
+ *      the live one field-for-field.
  *
  * Known v1 simplification, documented rather than silently skipped:
  * `in_motion`/`intensity`'s "high step delta" escape hatch needs a
@@ -81,7 +99,6 @@ class CurrentStateResolver
         private readonly NamedLocationRepository $namedLocations,
         private readonly NamedBluetoothDeviceRepository $namedBluetoothDevices,
         private readonly NamedNetworkRepository $namedNetworks,
-        private readonly string $stateFile,
     ) {
     }
 
@@ -92,28 +109,12 @@ class CurrentStateResolver
     {
         $now = new \DateTimeImmutable();
 
-        $raw = $this->snapshotClient->fetch();
-        $raw ??= $this->readCachedSnapshot();
-
-        if (null === $raw) {
-            return $this->buildFromDbOnly($now);
+        $raw = $this->snapshotClient->fetchFresh();
+        if (null !== $raw) {
+            return $this->decorate($raw, $now);
         }
 
-        return $this->decorate($raw, $now);
-    }
-
-    /**
-     * @return array<string, mixed>|null
-     */
-    private function readCachedSnapshot(): ?array
-    {
-        if (!is_file($this->stateFile)) {
-            return null;
-        }
-
-        $state = json_decode(file_get_contents($this->stateFile), true);
-
-        return $state['last_snapshot'] ?? null;
+        return $this->buildFromDbOnly($now);
     }
 
     /**
@@ -172,6 +173,7 @@ class CurrentStateResolver
         $decorated['activity']['intensity'] = $this->intensityOf($activityType, $hrBpm, $hrStatus);
         $decorated['activity']['in_motion'] = $this->inMotionOf($activityType);
         $decorated['wearables']['band']['hr_age_relative'] = null !== $hrAge ? $this->relativeTime($hrAge) : null;
+        $decorated['wearables']['band']['avg_hr_today'] = $this->averageHeartRateToday();
         $decorated['connectivity']['wifi_label'] = $network['label'];
         $decorated['connectivity']['wifi_note'] = $network['note'];
         $decorated['bt_devices'] = $this->resolveBtDevices($raw['bt_devices'] ?? []);
@@ -179,15 +181,18 @@ class CurrentStateResolver
         return [
             'server_time' => $this->serverTimeBlock($now),
             'verdict' => $verdict,
+            'source' => 'live',
             'looking_at_phone' => $lookingAtPhone,
             'last_activity' => [] !== $presentAges ? $this->relativeBlock(min($presentAges)) : $this->nullRelativeBlock(),
+            'sleep' => $this->lastNightSleep($now),
         ] + $decorated + ['fallback' => null];
     }
 
     /**
-     * Branch 3: no live read, and the-breath has never successfully cached
-     * a snapshot at all (fresh install, or the daemon's been down since
-     * before this process started). Necessarily a reduced, synthetic
+     * Branch 2: the live phone read failed — phone asleep, tailnet down,
+     * rate-limited, or genuinely gone. There is no intermediate cache
+     * anymore (see class docblock), so this is reached directly, not as a
+     * last resort after a cache miss. Necessarily a reduced, synthetic
      * shape — there is no raw document to reflect here. Falls back to
      * LiveVitalsResolver (itself live-then-DB) for location/heart
      * rate/steps, and to RecordRepository::latestReceivedAt() for
@@ -221,6 +226,7 @@ class CurrentStateResolver
         return [
             'server_time' => $this->serverTimeBlock($now),
             'verdict' => $verdict,
+            'source' => 'db',
             'looking_at_phone' => 'unknown',
             'last_activity' => [] !== $presentAges ? $this->relativeBlock(min($presentAges)) : $this->nullRelativeBlock(),
             'location' => [
@@ -235,6 +241,7 @@ class CurrentStateResolver
                 'band' => [
                     'hr_bpm' => $heartRate['bpm'] ?? null,
                     'hr_age_relative' => null !== $hrAge ? $this->relativeTime($hrAge) : null,
+                    'avg_hr_today' => $this->averageHeartRateToday(),
                 ],
             ],
             'activity' => [
@@ -242,6 +249,7 @@ class CurrentStateResolver
                 'intensity' => 'unknown',
                 'in_motion' => null,
             ],
+            'sleep' => $this->lastNightSleep($now),
             'bt_devices' => [],
             'fallback' => [
                 'reason' => 'no live data',
@@ -272,6 +280,95 @@ class CurrentStateResolver
     private function ageSeconds(?int $tsMs, \DateTimeImmutable $now): ?int
     {
         return null === $tsMs ? null : $now->getTimestamp() - intdiv($tsMs, 1000);
+    }
+
+    /**
+     * `wearables.band.avg_hr_today` — folded in from the retired
+     * `daily-vitals-summary` MCP tool (29.08.2026): the one thing that
+     * tool did that this one couldn't — `hr_bpm` is always a single
+     * live/last-known reading, never a daily average. DB-only by nature
+     * (an average needs the whole day's ingested records, not a snapshot),
+     * so computed the same way regardless of `source` (live or db).
+     *
+     * Weighted mean of each HeartRate record's cached average
+     * (RecordMetricsExtractor), weighted by its sample count — equivalent
+     * to averaging every individual sample directly (see the LLM wiki's
+     * concepts/record-metrics-cache.md) since no HeartRate row's window
+     * crosses a day boundary, without decoding payload_json per row.
+     */
+    private function averageHeartRateToday(): ?int
+    {
+        $startOfDay = (new \DateTimeImmutable('today', new \DateTimeZone(self::TIMEZONE)))
+            ->setTimezone(new \DateTimeZone('UTC'));
+
+        $weightedSum = 0.0;
+        $totalSamples = 0;
+        foreach ($this->records->findByTypeSince(RecordType::HEART_RATE->value, $startOfDay) as $record) {
+            if (null === $record->getMetricValue()) {
+                continue;
+            }
+            $n = $record->getSampleCount() ?? 1;
+            $weightedSum += $record->getMetricValue() * $n;
+            $totalSamples += $n;
+        }
+
+        return 0 === $totalSamples ? null : (int) round($weightedSum / $totalSamples);
+    }
+
+    /**
+     * `sleep` — the most recent sleep session, straight from the DB.
+     * Present in both the live and DB-only branches identically: sleep
+     * isn't part of the phone's /v1/snapshot contract at all, so there's
+     * no live reading to prefer over it either way. Not one of
+     * RecordMetricsExtractor's cached types (only Steps/HeartRate are), so
+     * this decodes payload_json directly.
+     *
+     * @return array{start_time: ?string, end_time: ?string, duration_minutes: ?int, duration_formatted: ?string, stages_minutes: ?array<string, int>, ended_relative: ?string}
+     */
+    private function lastNightSleep(\DateTimeImmutable $now): array
+    {
+        $record = $this->records->createQueryBuilder('r')
+            ->andWhere('r.type IN (:types)')
+            ->andWhere('r.deleted = false')
+            ->setParameter('types', RecordType::variants(RecordType::SLEEP->value))
+            ->orderBy('r.startTime', 'DESC')
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+
+        if (null === $record) {
+            return [
+                'start_time' => null,
+                'end_time' => null,
+                'duration_minutes' => null,
+                'duration_formatted' => null,
+                'stages_minutes' => null,
+                'ended_relative' => null,
+            ];
+        }
+
+        $payload = $record->getPayload();
+        $startTime = new \DateTimeImmutable($payload['startTime']);
+        $endTime = new \DateTimeImmutable($payload['endTime']);
+        $durationMinutes = (int) round(($endTime->getTimestamp() - $startTime->getTimestamp()) / 60);
+
+        $stagesMinutes = [];
+        foreach ($payload['stages'] ?? [] as $stage) {
+            $stageStart = new \DateTimeImmutable($stage['startTime']);
+            $stageEnd = new \DateTimeImmutable($stage['endTime']);
+            $stageMinutes = (int) round(($stageEnd->getTimestamp() - $stageStart->getTimestamp()) / 60);
+            $stageType = $stage['stage'] ?? 'unknown';
+            $stagesMinutes[$stageType] = ($stagesMinutes[$stageType] ?? 0) + $stageMinutes;
+        }
+
+        return [
+            'start_time' => $startTime->format(\DateTimeInterface::ATOM),
+            'end_time' => $endTime->format(\DateTimeInterface::ATOM),
+            'duration_minutes' => $durationMinutes,
+            'duration_formatted' => sprintf('%dh %dm', intdiv($durationMinutes, 60), $durationMinutes % 60),
+            'stages_minutes' => $stagesMinutes,
+            'ended_relative' => $this->relativeTime(max(0, $now->getTimestamp() - $endTime->getTimestamp())),
+        ];
     }
 
     private function statusOf(?int $ageSeconds, int $freshSeconds, int $staleSeconds): ?string

@@ -13,7 +13,9 @@ use Symfony\Contracts\Cache\CacheInterface;
  * Phase 2 of the "consolidation" plan (LLM wiki concepts/consolidation.md):
  * every 30 minutes, check records synced since the last tick for
  * duplicates/overlaps against their neighbors — maintenance, not
- * freshness, hence much slower than BreathSchedule's 3-minute cadence.
+ * freshness. Unrelated to (and outlived) the-breath's cadence poller,
+ * retired 29.08.2026 — this is the only remaining Scheduler/Messenger
+ * worker in the app.
  *
  * Run the worker with: php bin/console messenger:consume scheduler_consolidation
  */
