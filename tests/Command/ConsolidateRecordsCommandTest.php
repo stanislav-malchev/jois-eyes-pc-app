@@ -67,6 +67,9 @@ class ConsolidateRecordsCommandTest extends KernelTestCase
 
     public function testRealRunSoftDeletesLowerPriorityOverlappingStepsWithoutTouchingTheWinner(): void
     {
+        // Samsung Health wins for Steps (config/services.yaml) — confirmed
+        // 29.08.2026 against the phone's own Health Connect app that it's
+        // the band's data, not the phone's own on-device sensor.
         $day = new \DateTimeImmutable('2026-08-29T00:00:00Z');
         $this->records->upsertByRecordUid('steps-shealth', 'health_connect', 'StepsRecord', $day, $day->modify('+23 hours'), $day, $day, false, [
             'count' => 9455,
@@ -81,13 +84,13 @@ class ConsolidateRecordsCommandTest extends KernelTestCase
         $this->tester->execute([]);
 
         $shealth = $this->records->findOneByRecordUid('steps-shealth');
-        self::assertNotNull($shealth);
-        self::assertTrue($shealth->isDeleted());
-        self::assertSame(9455, $shealth->getPayload()['count']); // untouched, not zeroed/merged
+        self::assertFalse($shealth->isDeleted());
+        self::assertSame(9455, $shealth->getPayload()['count']); // untouched, not mutated into a sum
 
         $hc = $this->records->findOneByRecordUid('steps-hc');
-        self::assertFalse($hc->isDeleted());
-        self::assertSame(500, $hc->getPayload()['count']); // untouched, not mutated into a sum
+        self::assertNotNull($hc);
+        self::assertTrue($hc->isDeleted());
+        self::assertSame(500, $hc->getPayload()['count']); // untouched, not zeroed/merged
     }
 
     private function insertTombstone(string $uid): void

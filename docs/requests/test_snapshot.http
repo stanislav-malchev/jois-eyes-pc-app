@@ -1,0 +1,77 @@
+### JoisEyes backdoor server — manual request collection
+### docs/joiseyes-backdoor-v1.md is the authoritative contract for these endpoints.
+###
+### Setup (one-time, per machine):
+###   1. In the IDE's HTTP Client environment picker (top-right of this file), select "local".
+###   2. Create docs/requests/http-client.private.env.json (NOT committed — see .gitignore) with:
+###        { "local": { "host": "<your phone's Tailscale IP, e.g. 100.90.80.70>" } }
+###      This overrides the placeholder host in http-client.env.json. Keeping your real tailnet
+###      IP out of the public repo is a minor precaution, not a secret — there's no auth token.
+###
+### The server binds only to the phone's Tailscale address (docs/joiseyes-backdoor-v1.md §2) —
+### these requests will only succeed from another device on the same tailnet. There is no
+### authentication (single-user device); rate limiting (60/min) still applies to every route.
+
+### Liveness check — no sensor reads, cheapest possible.
+GET http://{{host}}:{{port}}/health
+
+> {%
+    client.test("status is 200", () => client.assert(response.status === 200));
+    client.test("has api_version", () => client.assert(response.body.api_version === 1));
+%}
+
+### Full snapshot, default params — fast=1 implied: last-known everywhere, no fresh sensor work.
+GET http://{{host}}:{{port}}/v1/snapshot
+
+> {%
+    client.test("status is 200", () => client.assert(response.status === 200));
+    client.test("has all top-level sections", () => {
+        const b = response.body;
+        ["meta", "power", "screen", "dnd", "location", "activity", "environment",
+         "wearables", "health_connect", "connectivity", "bt_devices"].forEach(key =>
+            client.assert(key in b, `missing key: ${key}`)
+        );
+    });
+%}
+
+### Snapshot with a fresh one-shot GPS fix (~3s). Sets location.fresh=true on success,
+### falls back to the last cached fix with fresh=false on timeout.
+GET http://{{host}}:{{port}}/v1/snapshot?gps=fix
+
+### Snapshot with bt=scan — accepted but currently a no-op this cut; bt_devices stays [].
+GET http://{{host}}:{{port}}/v1/snapshot?bt=scan
+
+### Snapshot with gps=fix AND bt=scan combined (worst-case latency, on-demand only).
+GET http://{{host}}:{{port}}/v1/snapshot?gps=fix&bt=scan
+
+### hc=pull — triggers a Health Connect ingest + PC sync push chain (docs/joiseyes-backdoor-v1.md
+### §3.1). Returns an immediate ack, NOT the full snapshot; watch health_connect.last_sync_ts on
+### a follow-up plain /v1/snapshot request to confirm it actually ran.
+GET http://{{host}}:{{port}}/v1/snapshot?hc=pull
+
+> {%
+    client.test("status is 200", () => client.assert(response.status === 200));
+    client.test("triggered is present", () => client.assert("triggered" in response.body));
+%}
+
+### Re-run hc=pull immediately after the request above — if the chain from the previous
+### request is still running, this should ack already_running=true instead of enqueueing a
+### second chain (coalescing).
+GET http://{{host}}:{{port}}/v1/snapshot?hc=pull
+
+### Follow-up plain snapshot to see whether health_connect.last_sync_ts advanced after hc=pull.
+GET http://{{host}}:{{port}}/v1/snapshot
+
+### Unknown route — expect 404.
+GET http://{{host}}:{{port}}/v1/nonexistent
+
+> {%
+    client.test("status is 404", () => client.assert(response.status === 404));
+%}
+
+### Rate limit (60 req/min, docs/joiseyes-backdoor-v1.md §2): not practical to script as a single
+### request here. To exercise it manually, use the IDE's "Run all requests in file" repeatedly, or
+### from a shell on a tailnet-joined machine:
+###   for i in $(seq 1 65); do curl -s -o /dev/null -w "%{http_code}\n" \
+###     http://<host>:8788/v1/snapshot; done
+### Expect the first ~60 to return 200 and the rest 429 with a Retry-After header.

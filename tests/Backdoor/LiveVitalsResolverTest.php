@@ -135,9 +135,11 @@ class LiveVitalsResolverTest extends KernelTestCase
     {
         $startOfDayUtc = new \DateTimeImmutable('today', new \DateTimeZone('UTC'));
 
-        // Samsung Health's whole-day rollup and Health Connect's own narrower
-        // phone-sensor bursts covering (part of) the same window — the real
-        // 28.08.2026 finding. Only Health Connect's count should be summed.
+        // Samsung Health's whole-day rollup and the phone's own narrower
+        // on-device-sensor bursts covering (part of) the same window.
+        // Confirmed 29.08.2026 against the phone's own Health Connect app,
+        // day by day, that Samsung Health (fed by the band) is correct and
+        // the phone-bridge bursts are the redundant/wrong reading.
         $this->insertStepsRecord(9455, $startOfDayUtc, $startOfDayUtc->modify('+23 hours'), 'com.sec.android.app.shealth');
         $this->insertStepsRecord(5000, $startOfDayUtc->modify('+1 hour'), $startOfDayUtc->modify('+2 hours'), 'com.android.healthconnect.phone.sensor');
         $this->insertStepsRecord(3147, $startOfDayUtc->modify('+3 hour'), $startOfDayUtc->modify('+4 hours'), 'com.android.healthconnect.phone.sensor');
@@ -147,21 +149,21 @@ class LiveVitalsResolverTest extends KernelTestCase
         $steps = $resolver->getStepsToday($startOfDayUtc);
 
         self::assertSame(LiveVitalsResolver::SOURCE_STORED_RECORDS, $steps['source']);
-        self::assertSame(8147, $steps['steps']);
+        self::assertSame(9455, $steps['steps']);
     }
 
     private function resolverWithSnapshot(array $snapshotBody): LiveVitalsResolver
     {
         $httpClient = new MockHttpClient(new MockResponse(json_encode($snapshotBody + ['api_version' => 1])));
 
-        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsConsolidator(new DataOriginPriority(), $this->records));
+        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsConsolidator(new DataOriginPriority(['com.sec.android.app.shealth' => 10]), $this->records));
     }
 
     private function resolverWithUnreachableSnapshot(): LiveVitalsResolver
     {
         $httpClient = new MockHttpClient(new MockResponse('', ['error' => 'Connection refused']));
 
-        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsConsolidator(new DataOriginPriority(), $this->records));
+        return new LiveVitalsResolver(new SnapshotClient($httpClient, 'http://phone.test:8788'), $this->records, new DailyStepsConsolidator(new DataOriginPriority(['com.sec.android.app.shealth' => 10]), $this->records));
     }
 
     private function insertLocationRecord(float $lat, float $lon): void
