@@ -7,6 +7,7 @@ use App\Backdoor\SnapshotClient;
 use App\Repository\RecordRepository;
 use App\Service\Consolidation\DailyStepsConsolidator;
 use App\Service\Consolidation\DataOriginPriority;
+use App\Service\Normalization\RecordMetricsExtractor;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -193,7 +194,11 @@ class LiveVitalsResolverTest extends KernelTestCase
         if ($dataOrigin !== null) {
             $payload['dataOrigin'] = $dataOrigin;
         }
-        $this->records->upsertByRecordUid("steps-$i", 'health_connect', 'StepsRecord', $startTime, $endTime, $startTime, $startTime, false, $payload);
+        $record = $this->records->upsertByRecordUid("steps-$i", 'health_connect', 'StepsRecord', $startTime, $endTime, $startTime, $startTime, false, $payload);
+        // DailyStepsConsolidator::resolveDay() (used by getStepsToday()'s
+        // DB fallback) now reads metricValue/dataOrigin columns, not
+        // payload — mirror real ingest, which always runs the extractor.
+        (new RecordMetricsExtractor())->extract($record);
         $this->em->flush();
     }
 }

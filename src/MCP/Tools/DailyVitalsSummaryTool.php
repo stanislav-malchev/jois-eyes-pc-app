@@ -70,15 +70,22 @@ class DailyVitalsSummaryTool implements StreamableToolInterface
 
         $steps = $this->vitals->getStepsToday($startOfDay);
 
-        $bpmReadings = [];
+        // Weighted mean of each row's cached average (RecordMetricsExtractor),
+        // weighted by its sampleCount — equivalent to averaging every
+        // individual sample directly (see LLM wiki concepts/
+        // record-metrics-cache.md) since no HeartRate row's window crosses a
+        // day boundary, without decoding payload_json per row.
+        $weightedSum = 0.0;
+        $totalSamples = 0;
         foreach ($this->records->findByTypeSince(RecordType::HEART_RATE->value, $startOfDay) as $record) {
-            foreach ($record->getPayload()['samples'] ?? [] as $sample) {
-                if (isset($sample['beatsPerMinute'])) {
-                    $bpmReadings[] = (int) $sample['beatsPerMinute'];
-                }
+            if ($record->getMetricValue() === null) {
+                continue;
             }
+            $n = $record->getSampleCount() ?? 1;
+            $weightedSum += $record->getMetricValue() * $n;
+            $totalSamples += $n;
         }
-        $avgHeartRate = $bpmReadings === [] ? null : (int) round(array_sum($bpmReadings) / count($bpmReadings));
+        $avgHeartRate = $totalSamples === 0 ? null : (int) round($weightedSum / $totalSamples);
 
         return new StructuredToolResult([
             'steps' => $steps['steps'],

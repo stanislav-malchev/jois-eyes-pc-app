@@ -5,6 +5,7 @@ namespace App\Tests\Service\Consolidation;
 use App\Entity\Record;
 use App\Service\Consolidation\DataOriginPriority;
 use App\Service\Consolidation\OverlapResolver;
+use App\Service\Normalization\RecordMetricsExtractor;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -113,6 +114,12 @@ class OverlapResolverTest extends TestCase
             ->setReceivedAt(new \DateTimeImmutable($start))
             ->setDeleted(false)
             ->setPayload($payload);
+
+        // OverlapResolver now reads the priority-decision fields from
+        // RecordMetricsExtractor's cached columns, not payload — mirror
+        // what real ingest/consolidation does so this fixture behaves like
+        // a real synced record, not a hand-built one missing the cache.
+        (new RecordMetricsExtractor())->extract($record);
 
         $reflection = new \ReflectionProperty(Record::class, 'id');
         $reflection->setAccessible(true);

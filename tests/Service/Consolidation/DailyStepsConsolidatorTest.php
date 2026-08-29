@@ -5,6 +5,7 @@ namespace App\Tests\Service\Consolidation;
 use App\Repository\RecordRepository;
 use App\Service\Consolidation\DailyStepsConsolidator;
 use App\Service\Consolidation\DataOriginPriority;
+use App\Service\Normalization\RecordMetricsExtractor;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -139,6 +140,9 @@ class DailyStepsConsolidatorTest extends KernelTestCase
             'count' => $count,
             'dataOrigin' => $dataOrigin,
         ]);
+        // resolveDay() now reads metricValue/dataOrigin columns, not
+        // payload — mirror real ingest, which always runs the extractor.
+        (new RecordMetricsExtractor())->extract($record);
         $this->em->flush();
 
         return $record;

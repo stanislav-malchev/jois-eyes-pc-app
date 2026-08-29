@@ -74,7 +74,7 @@ final class DailyStepsConsolidator
             return ['total' => 0, 'winners' => [], 'losers' => []];
         }
 
-        $priorityOf = fn (Record $r) => $this->priority->priorityOf($r->getPayload()['dataOrigin'] ?? null);
+        $priorityOf = fn (Record $r) => $this->priority->priorityOf($r->getDataOrigin());
         $maxPriority = max(array_map($priorityOf, $records));
         $tier = array_values(array_filter($records, fn (Record $r) => $priorityOf($r) === $maxPriority));
         $rest = array_values(array_filter($records, fn (Record $r) => $priorityOf($r) !== $maxPriority));
@@ -83,7 +83,7 @@ final class DailyStepsConsolidator
         $winners = array_values(array_filter($tier, static fn (Record $r) => !in_array($r->getId(), $dupIdsInTier, true)));
         $dupLosers = array_values(array_filter($tier, static fn (Record $r) => in_array($r->getId(), $dupIdsInTier, true)));
 
-        $total = array_sum(array_map(static fn (Record $r) => (int) ($r->getPayload()['count'] ?? 0), $winners));
+        $total = array_sum(array_map(static fn (Record $r) => (int) ($r->getMetricValue() ?? 0), $winners));
 
         return ['total' => $total, 'winners' => $winners, 'losers' => [...$rest, ...$dupLosers]];
     }

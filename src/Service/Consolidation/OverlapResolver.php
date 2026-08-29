@@ -51,7 +51,7 @@ final class OverlapResolver
                 continue;
             }
 
-            $priorityOf = fn (Record $r) => $this->priority->priorityOf($r->getPayload()['dataOrigin'] ?? null);
+            $priorityOf = fn (Record $r) => $this->priority->priorityOf($r->getDataOrigin());
             $maxPriority = max(array_map($priorityOf, $group));
             $winners = array_values(array_filter($group, fn (Record $r) => $priorityOf($r) === $maxPriority));
             $contenders = array_values(array_filter($group, fn (Record $r) => $priorityOf($r) < $maxPriority));
