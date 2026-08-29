@@ -58,22 +58,37 @@ class StepsController extends AbstractController
             ->getQuery()
             ->getResult();
 
-        $stepData = [];
-        $totalSteps = 0;
+        // One point per calendar day, zero-filled for days with no data —
+        // a per-record chart stopped making sense once consolidation
+        // collapses (most) days to a single row; a reader wants "how many
+        // steps that day", not when during the day they happened.
+        $byDay = [];
         foreach ($records as $record) {
-            $payload = $record->getPayload();
-            $count = (int)($payload['count'] ?? 0);
-            $totalSteps += $count;
-            $stepData[] = [
-                't' => $record->getStartTime()->format(\DateTimeInterface::ATOM),
-                'v' => $count
-            ];
+            $day = $record->getStartTime()->setTimezone($sofiaTz)->format('Y-m-d');
+            $byDay[$day] = ($byDay[$day] ?? 0) + (int) ($record->getPayload()['count'] ?? 0);
         }
+
+        $stepData = [];
+        $cursor = $startDate->setTimezone($sofiaTz);
+        $rangeEnd = $endDate->setTimezone($sofiaTz);
+        while ($cursor <= $rangeEnd) {
+            $key = $cursor->format('Y-m-d');
+            $stepData[] = [
+                'date' => $key,
+                'label' => $cursor->format('D, M j'),
+                'steps' => $byDay[$key] ?? 0,
+            ];
+            $cursor = $cursor->modify('+1 day');
+        }
+
+        $dailyTotals = array_column($stepData, 'steps');
+        $totalSteps = array_sum($dailyTotals);
+        $daysWithData = count(array_filter($dailyTotals));
 
         $metrics = [
             'total' => $totalSteps,
-            'hourly_avg' => count($stepData) > 0 ? round($totalSteps / max(1, count($stepData)), 1) : 0,
-            'max_burst' => count($stepData) > 0 ? max(array_column($stepData, 'v')) : 0,
+            'daily_avg' => $daysWithData > 0 ? round($totalSteps / $daysWithData, 1) : 0,
+            'best_day' => $dailyTotals === [] ? 0 : max($dailyTotals),
         ];
 
         return $this->render('admin/steps.html.twig', [
