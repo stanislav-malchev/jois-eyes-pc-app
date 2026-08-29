@@ -71,10 +71,13 @@ class StepsController extends AbstractController
         // days to a single row; a reader wants "how many steps that day",
         // not when during the day they happened. Metrics (avg/best) always
         // work at day granularity, regardless of the chart's own bucketing.
+        // Reads RecordMetricsExtractor's metricValue column (exactly the
+        // payload's 'count', cached at sync/consolidation time) instead of
+        // decoding payload_json per row.
         $byDay = [];
         foreach ($records as $record) {
             $day = $record->getStartTime()->setTimezone($sofiaTz)->format('Y-m-d');
-            $byDay[$day] = ($byDay[$day] ?? 0) + (int) ($record->getPayload()['count'] ?? 0);
+            $byDay[$day] = ($byDay[$day] ?? 0) + (int) ($record->getMetricValue() ?? 0);
         }
 
         if ($view === 'A') {

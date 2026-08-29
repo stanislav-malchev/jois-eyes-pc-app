@@ -2,6 +2,7 @@
 
 namespace App\Controller\Admin;
 
+use App\Entity\Record;
 use App\Enum\RecordType;
 use App\Repository\RecordRepository;
 use App\Service\Admin\SofiaDayRange;
@@ -67,40 +68,44 @@ class HeartRateController extends AbstractController
                 ->getResult();
         }
 
-        $bpmValues = [];
-        foreach ($records as $record) {
-            $payload = $record->getPayload();
-            // HeartRateRecord payload contains 'samples' which is an array of {beatsPerMinute: int, time: string}
-            // or sometimes it might be just a single value depending on implementation.
-            // Based on previous search, it has 'samples'.
-            if (isset($payload['samples']) && is_array($payload['samples'])) {
-                foreach ($payload['samples'] as $sample) {
-                    if (isset($sample['beatsPerMinute'])) {
-                        $bpmValues[] = [
-                            't' => $sample['time'] ?? $record->getStartTime()->format(\DateTimeInterface::ATOM),
-                            'v' => (int) $sample['beatsPerMinute'],
-                        ];
+        if ($view === 'D') {
+            // Raw samples, chronological — intraday BPM variation is
+            // meaningful, unlike Steps. Only the day view needs per-minute
+            // granularity, which the denormalized columns don't carry (they
+            // cache one avg/min/max per row, not each individual sample) —
+            // so this is the one place that still decodes payload_json.
+            $bpmValues = [];
+            foreach ($records as $record) {
+                $payload = $record->getPayload();
+                if (isset($payload['samples']) && is_array($payload['samples'])) {
+                    foreach ($payload['samples'] as $sample) {
+                        if (isset($sample['beatsPerMinute'])) {
+                            $bpmValues[] = [
+                                't' => $sample['time'] ?? $record->getStartTime()->format(\DateTimeInterface::ATOM),
+                                'v' => (int) $sample['beatsPerMinute'],
+                            ];
+                        }
                     }
                 }
             }
-        }
 
-        $metrics = $this->calculateMetrics($bpmValues);
-
-        if ($view === 'D') {
-            // Raw samples, chronological — intraday BPM variation is
-            // meaningful, unlike Steps.
+            $metrics = $this->calculateMetrics($bpmValues);
             $chartData = array_map(
                 static fn (array $s) => ['label' => (new \DateTimeImmutable($s['t']))->setTimezone($sofiaTz)->format('H:i'), 'value' => $s['v']],
                 $bpmValues,
             );
         } else {
-            // W/M/Y aggregate to one average-BPM point per day/month across
-            // the *actual* period boundaries (gaps stay null, not 0 — "0
-            // BPM" isn't a real reading); A has no fixed boundary, so it
-            // spans from the earliest sample to now instead.
+            // W/M/Y/A read RecordMetricsExtractor's per-row metricValue/
+            // metricMin/metricMax/sampleCount columns instead of decoding
+            // samples — mathematically equivalent here because no HeartRate
+            // row's time window crosses a day boundary, so a weighted mean
+            // of per-row averages (weighted by sampleCount) equals the true
+            // mean of every individual sample, and the true global min/max
+            // is exactly the min/max of the per-row mins/maxes.
+            $withMetrics = array_values(array_filter($records, static fn (Record $r) => $r->getMetricValue() !== null));
+
             if ($view === 'A') {
-                $rangeStart = $bpmValues === [] ? $baseDate : new \DateTimeImmutable(min(array_column($bpmValues, 't')), $sofiaTz);
+                $rangeStart = $withMetrics === [] ? $baseDate : $withMetrics[0]->getStartTime()->setTimezone($sofiaTz);
                 $rangeEnd = new \DateTimeImmutable('now', $sofiaTz);
             } else {
                 $rangeStart = $startDate->setTimezone($sofiaTz);
@@ -112,19 +117,23 @@ class HeartRateController extends AbstractController
             $step = $view === 'A' ? '+1 year' : ($view === 'Y' ? '+1 month' : '+1 day');
 
             $byBucket = [];
-            foreach ($bpmValues as $sample) {
-                $key = (new \DateTimeImmutable($sample['t']))->setTimezone($sofiaTz)->format($bucketFormat);
-                $byBucket[$key][] = $sample['v'];
+            foreach ($withMetrics as $record) {
+                $key = $record->getStartTime()->setTimezone($sofiaTz)->format($bucketFormat);
+                $n = $record->getSampleCount() ?? 1;
+                $byBucket[$key]['sum'] = ($byBucket[$key]['sum'] ?? 0) + $record->getMetricValue() * $n;
+                $byBucket[$key]['count'] = ($byBucket[$key]['count'] ?? 0) + $n;
             }
 
             $chartData = [];
             for ($cursor = $rangeStart; $cursor <= $rangeEnd; $cursor = $cursor->modify($step)) {
-                $values = $byBucket[$cursor->format($bucketFormat)] ?? null;
+                $bucket = $byBucket[$cursor->format($bucketFormat)] ?? null;
                 $chartData[] = [
                     'label' => $cursor->format($labelFormat),
-                    'value' => $values === null ? null : round(array_sum($values) / count($values), 1),
+                    'value' => $bucket === null ? null : round($bucket['sum'] / $bucket['count'], 1),
                 ];
             }
+
+            $metrics = $this->calculateMetricsFromRecords($withMetrics);
         }
 
         return $this->render('admin/heart_rate.html.twig', [
@@ -176,6 +185,45 @@ class HeartRateController extends AbstractController
             'latest' => end($bpmValues)['v'],
         ];
     }
+
+    /**
+     * Column-based equivalent of calculateMetrics() for W/M/Y/A, where
+     * $records already carries metricValue/metricMin/metricMax/sampleCount
+     * for every row (records are pre-filtered to only those with a
+     * non-null metricValue, and pre-sorted by startTime ASC). 'latest' is
+     * the most recent row's *average* bpm rather than its single most
+     * recent sample — the columns don't retain individual sample order, so
+     * this is a deliberate (small) precision trade for not decoding JSON.
+     *
+     * @param Record[] $records
+     */
+    private function calculateMetricsFromRecords(array $records): array
+    {
+        if ($records === []) {
+            return [
+                'min' => 0,
+                'max' => 0,
+                'average' => 0,
+                'latest' => 0,
+            ];
+        }
+
+        $weightedSum = 0.0;
+        $totalSamples = 0;
+        foreach ($records as $record) {
+            $n = $record->getSampleCount() ?? 1;
+            $weightedSum += $record->getMetricValue() * $n;
+            $totalSamples += $n;
+        }
+
+        return [
+            'min' => (int) min(array_map(static fn (Record $r) => $r->getMetricMin() ?? $r->getMetricValue(), $records)),
+            'max' => (int) max(array_map(static fn (Record $r) => $r->getMetricMax() ?? $r->getMetricValue(), $records)),
+            'average' => round($weightedSum / $totalSamples, 1),
+            'latest' => (int) round(end($records)->getMetricValue()),
+        ];
+    }
+
     public static function getSubscribedServices(): array
     {
         return array_merge(parent::getSubscribedServices(), [
