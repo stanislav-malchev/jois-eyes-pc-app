@@ -1,0 +1,45 @@
+### JoisEyes PC service — plain-HTTP view of the pc-state MCP tool
+###
+### GET /api/v1/pc-state returns the exact same document as the `pc-state`
+### MCP tool (App\MCP\Tools\PcStateTool / App\Service\PcState\
+### PcStateResolver) — a proxy of the WindowsEyes agent's GET /idle
+### (keyboard/mouse input-idle timer on the Windows box), decorated with
+### `verdict` (at_desk/stepped_away/away/desk_asleep) and `idle_relative`.
+###
+### Tier 1 ("question") in the presence check ladder the LLM wiki's
+### concepts/pc-presence-agent.md describes — cheaper than current-state
+### (tier 2, "full read"), which forces a phone GPS fix and radio wake on
+### every call; more than a raw tier-0 glance straight at the agent, which
+### this service doesn't do on its own.
+###
+### The agent's tailnet bind has shipped (see the wiki page's milestone-2
+### update), but the agent process itself isn't always running — this
+### collection exists to prove the shape is honest either way, not to prove
+### the agent is currently reachable. When it is, the raw response also
+### carries `ts` (the agent's own epoch-ms reading time) and
+### `agent_server_time` (the agent's own clock — kept under this name
+### rather than `server_time` to avoid colliding with this tool's own
+### anchor field, which is always *this* server's clock).
+
+### Default call.
+GET http://localhost:9091/api/v1/pc-state
+
+> {%
+    client.test("status is 200", () => client.assert(response.status === 200));
+    client.test("server_time is first and in Europe/Sofia", () => {
+        const keys = Object.keys(response.body);
+        client.assert(keys[0] === "server_time", `expected server_time first, got ${keys[0]}`);
+        client.assert(response.body.server_time.timezone === "Europe/Sofia");
+    });
+    client.test("has the honest-unreachable or reachable shape", () => {
+        const b = response.body;
+        ["reachable", "idle_seconds", "idle_relative", "verdict", "agent_server_time"].forEach(key =>
+            client.assert(key in b, `missing key: ${key}`)
+        );
+        if (b.reachable === false) {
+            client.assert(b.idle_seconds === null, "idle_seconds should be null when unreachable");
+            client.assert(b.verdict === null, "verdict should be null when unreachable");
+            client.assert(b.agent_server_time === null, "agent_server_time should be null when unreachable");
+        }
+    });
+%}

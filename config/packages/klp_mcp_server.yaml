@@ -24,6 +24,7 @@ klp_mcp_server:
 
     tools:
         - App\MCP\Tools\CurrentStateTool
+        - App\MCP\Tools\PcStateTool
 
     prompts: []
 

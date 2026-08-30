@@ -1,0 +1,44 @@
+{% extends ea is defined and ea is not null ? ea.templatePath('layout') : '@EasyAdmin/page/content.html.twig' %}
+
+{% block content_title %}PC State (the desk tier){% endblock %}
+
+{% block page_actions %}
+    <a href="{{ path('admin_pc_state') }}" class="btn btn-primary">
+        <i class="fa fa-rotate-right"></i> Poll again
+    </a>
+{% endblock %}
+
+{% block main %}
+    <p class="text-muted">
+        Exactly what the <code>pc-state</code> MCP tool and <code>GET /api/v1/pc-state</code>
+        return — a proxy of the WindowsEyes agent's keyboard/mouse idle timer, the cheap
+        "is Stan at the desk" question between a raw <code>/idle</code> glance and the full
+        <a href="{{ path('admin_current_state') }}">Current State</a> read.
+    </p>
+
+    <div class="row mb-3">
+        <div class="col-md-4">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Reachable</div>
+                <div class="h2">{{ reachable ? 'yes' : 'no' }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Verdict</div>
+                <div class="h2">{{ verdict ?? '—' }}</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card card-body text-center">
+                <div class="h5 text-muted">Server Time</div>
+                <div class="h2">{{ serverTime }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card card-body">
+        <div class="h5 text-muted mb-3">Raw response</div>
+        <pre style="max-height: 70vh; overflow: auto; background: #1e1e1e; color: #d4d4d4; padding: 1rem; border-radius: 4px; white-space: pre-wrap;">{{ json }}</pre>
+    </div>
+{% endblock %}

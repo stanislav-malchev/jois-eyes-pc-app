@@ -49,6 +49,7 @@ class DashboardController extends AbstractDashboardController
         yield MenuItem::linkToRoute('Steps', 'fa fa-shoe-prints', 'admin_steps');
         yield MenuItem::section('MCP Tools', 'fa fa-robot');
         yield MenuItem::linkToRoute('Current State', 'fa fa-eye', 'admin_current_state');
+        yield MenuItem::linkToRoute('PC State', 'fa fa-desktop', 'admin_pc_state');
         yield MenuItem::section('Settings', 'fa fa-gear');
         yield MenuItem::linkTo(NamedLocationCrudController::class, 'My Places', 'fa fa-map-marker-alt');
         yield MenuItem::linkTo(NamedNetworkCrudController::class, 'My Networks', 'fa fa-wifi');

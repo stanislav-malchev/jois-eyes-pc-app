@@ -22,6 +22,7 @@
         "symfony/framework-bundle": "7.4.*",
         "symfony/http-client": "*",
         "symfony/messenger": "*",
+        "symfony/process": "7.4.*",
         "symfony/runtime": "7.4.*",
         "symfony/scheduler": "*",
         "symfony/twig-bundle": "7.4.*",
