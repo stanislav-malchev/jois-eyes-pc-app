@@ -3,6 +3,7 @@
 namespace App\Tests\Service\Consolidation;
 
 use App\Entity\Record;
+use App\Repository\NamedLocationRepository;
 use App\Service\Consolidation\DataOriginPriority;
 use App\Service\Consolidation\OverlapResolver;
 use App\Service\Normalization\RecordMetricsExtractor;
@@ -119,7 +120,10 @@ class OverlapResolverTest extends TestCase
         // RecordMetricsExtractor's cached columns, not payload — mirror
         // what real ingest/consolidation does so this fixture behaves like
         // a real synced record, not a hand-built one missing the cache.
-        (new RecordMetricsExtractor())->extract($record);
+        // These fixtures are always HeartRateRecord, never LocationFix, so
+        // the NamedLocationRepository collaborator is never actually
+        // invoked — a stub is enough.
+        (new RecordMetricsExtractor($this->createStub(NamedLocationRepository::class)))->extract($record);
 
         $reflection = new \ReflectionProperty(Record::class, 'id');
         $reflection->setAccessible(true);

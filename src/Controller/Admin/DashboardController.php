@@ -47,6 +47,7 @@ class DashboardController extends AbstractDashboardController
         yield MenuItem::linkToRoute('Heart Rate', 'fa fa-heart-pulse', 'admin_heart_rate');
         yield MenuItem::linkToRoute('Sleep', 'fa fa-bed', 'admin_sleep');
         yield MenuItem::linkToRoute('Steps', 'fa fa-shoe-prints', 'admin_steps');
+        yield MenuItem::linkToRoute('Location', 'fa fa-location-dot', 'admin_location');
         yield MenuItem::section('MCP Tools', 'fa fa-robot');
         yield MenuItem::linkToRoute('Current State', 'fa fa-eye', 'admin_current_state');
         yield MenuItem::linkToRoute('PC State', 'fa fa-desktop', 'admin_pc_state');
@@ -54,15 +55,7 @@ class DashboardController extends AbstractDashboardController
         yield MenuItem::linkTo(NamedLocationCrudController::class, 'My Places', 'fa fa-map-marker-alt');
         yield MenuItem::linkTo(NamedNetworkCrudController::class, 'My Networks', 'fa fa-wifi');
         yield MenuItem::linkTo(NamedBluetoothDeviceCrudController::class, 'My BT Devices', 'fa fa-bluetooth-b');
-        /*yield MenuItem::linkTo(RecordCrudController::class, 'Location', 'fa fa-location-dot')
-            ->setQueryParameter('filters[source][comparison]', '=')
-            ->setQueryParameter('filters[source][value]', 'location');
-        yield MenuItem::linkTo(RecordCrudController::class, 'Health Connect', 'fa fa-heart-pulse')
-            ->setQueryParameter('filters[source][comparison]', '=')
-            ->setQueryParameter('filters[source][value]', 'health_connect');*/
         yield MenuItem::linkTo(RecordCrudController::class, 'All records', 'fa fa-list')
             ->setQueryParameter('filters[deleted]', 0);
-//            ->setQueryParameter('filters[deleted][value]', 'health_connect');
-
     }
 }

@@ -488,24 +488,13 @@ class CurrentStateResolver
      */
     private function closestPlaceNote(array $places, ?float $lat, ?float $lon): ?string
     {
-        if (null === $lat || null === $lon || [] === $places) {
+        if (null === $lat || null === $lon) {
             return null;
         }
 
-        $current = new Coordinate($lat, $lon);
-        $haversine = new Haversine();
+        $closest = $this->namedLocations->findClosestAmong($places, $lat, $lon);
 
-        $closest = null;
-        $closestDistance = null;
-        foreach ($places as $place) {
-            $distance = $haversine->getDistance($current, new Coordinate($place->getLatitude(), $place->getLongitude()));
-            if (null === $closestDistance || $distance < $closestDistance) {
-                $closestDistance = $distance;
-                $closest = $place;
-            }
-        }
-
-        return sprintf('location is closest to "%s"', $closest->getName());
+        return null !== $closest ? sprintf('location is closest to "%s"', $closest->getName()) : null;
     }
 
     /**

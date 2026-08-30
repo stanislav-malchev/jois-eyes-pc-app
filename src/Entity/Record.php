@@ -66,6 +66,31 @@ class Record
     #[ORM\Column(nullable: true)]
     private ?int $sampleCount = null;
 
+    /**
+     * Denormalized cache of LocationFix payload fields, same idea/lifecycle
+     * as the metric columns above — populated by RecordMetricsExtractor,
+     * null for every other type.
+     */
+    #[ORM\Column(nullable: true)]
+    private ?float $latitude = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?float $longitude = null;
+
+    #[ORM\Column(nullable: true)]
+    private ?float $accuracyMeters = null;
+
+    /**
+     * The NamedLocation id closest to latitude/longitude by straight-line
+     * distance (see NamedLocationRepository::findClosestAmong()) —
+     * intentionally a plain id, not a Doctrine relation: it's a derived
+     * cache like the rest of these columns (recomputed from payload/named
+     * places every time, not a real foreign key), and a deleted
+     * NamedLocation would otherwise leave a dangling association.
+     */
+    #[ORM\Column(nullable: true)]
+    private ?int $closestToId = null;
+
     public function __construct(string $recordUid)
     {
         $this->recordUid = $recordUid;
@@ -233,6 +258,54 @@ class Record
     public function setSampleCount(?int $sampleCount): static
     {
         $this->sampleCount = $sampleCount;
+
+        return $this;
+    }
+
+    public function getLatitude(): ?float
+    {
+        return $this->latitude;
+    }
+
+    public function setLatitude(?float $latitude): static
+    {
+        $this->latitude = $latitude;
+
+        return $this;
+    }
+
+    public function getLongitude(): ?float
+    {
+        return $this->longitude;
+    }
+
+    public function setLongitude(?float $longitude): static
+    {
+        $this->longitude = $longitude;
+
+        return $this;
+    }
+
+    public function getAccuracyMeters(): ?float
+    {
+        return $this->accuracyMeters;
+    }
+
+    public function setAccuracyMeters(?float $accuracyMeters): static
+    {
+        $this->accuracyMeters = $accuracyMeters;
+
+        return $this;
+    }
+
+    public function getClosestToId(): ?int
+    {
+        return $this->closestToId;
+    }
+
+    public function setClosestToId(?int $closestToId): static
+    {
+        $this->closestToId = $closestToId;
 
         return $this;
     }

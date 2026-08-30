@@ -24,10 +24,21 @@ return [
         'path' => './assets/heart_rate_chart.js',
         'entrypoint' => true,
     ],
+    'location_map' => [
+        'path' => './assets/location_map.js',
+        'entrypoint' => true,
+    ],
     'chart.js' => [
         'version' => '4.5.1',
     ],
     '@kurkle/color' => [
         'version' => '0.3.4',
+    ],
+    'leaflet' => [
+        'version' => '1.9.4',
+    ],
+    'leaflet/dist/leaflet.min.css' => [
+        'version' => '1.9.4',
+        'type' => 'css',
     ],
 ];

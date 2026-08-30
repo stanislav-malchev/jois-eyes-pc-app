@@ -198,7 +198,7 @@ class LiveVitalsResolverTest extends KernelTestCase
         // DailyStepsConsolidator::resolveDay() (used by getStepsToday()'s
         // DB fallback) now reads metricValue/dataOrigin columns, not
         // payload — mirror real ingest, which always runs the extractor.
-        (new RecordMetricsExtractor())->extract($record);
+        self::getContainer()->get(RecordMetricsExtractor::class)->extract($record);
         $this->em->flush();
     }
 }

@@ -561,7 +561,7 @@ class CurrentStateResolverTest extends KernelTestCase
         );
         // averageHeartRateToday() reads the denormalized metric-cache
         // columns (RecordMetricsExtractor), not the raw payload directly.
-        (new RecordMetricsExtractor())->extract($record);
+        self::getContainer()->get(RecordMetricsExtractor::class)->extract($record);
         $this->em->flush();
     }
 

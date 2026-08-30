@@ -1,0 +1,76 @@
+{% extends ea is defined and ea is not null ? ea.templatePath('layout') : '@EasyAdmin/page/content.html.twig' %}
+
+{% block content_title %}{{ dateDisplayString }}{% endblock %}
+
+{# base.html.twig's javascripts block renders this — override it here to also
+   load this page's map module, instead of calling importmap() a second
+   time (only one <script type="importmap"> tag is valid per page). #}
+{% block importmap %}{{ importmap(['app', 'location_map']) }}{% endblock %}
+
+{% block page_actions %}
+    {% if ea is not null %}
+        <select class="form-select me-2" style="width: auto; display: inline-block;"
+                onchange="window.location.href='{{ path('admin_location', {date: currentDate, view: currentView}) }}&closestTo=' + this.value">
+            <option value="all"{{ currentClosestTo is null ? ' selected' : '' }}>All places</option>
+            {% for id, name in namedLocations %}
+                <option value="{{ id }}"{{ currentClosestTo == id ? ' selected' : '' }}>{{ name }}</option>
+            {% endfor %}
+        </select>
+
+        {% if currentView != 'A' %}
+            <div class="btn-group me-2" role="group">
+                <a href="{{ path('admin_location', {date: prevDate, view: currentView, closestTo: currentClosestTo ?? 'all'}) }}" class="btn btn-secondary">
+                    <i class="fa fa-chevron-left"></i>
+                </a>
+                <input type="date" value="{{ currentDate }}"
+                       class="btn btn-secondary text-white"
+                       onchange="window.location.href='{{ path('admin_location', {view: currentView, closestTo: currentClosestTo ?? 'all'}) }}&date=' + this.value"
+                       style="border-radius: 0; border-left: 1px solid rgba(255,255,255,0.1); border-right: 1px solid rgba(255,255,255,0.1);">
+                <a href="{{ path('admin_location', {date: nextDate, view: currentView, closestTo: currentClosestTo ?? 'all'}) }}" class="btn btn-secondary">
+                    <i class="fa fa-chevron-right"></i>
+                </a>
+            </div>
+        {% endif %}
+
+        <div class="btn-group" role="group">
+            <a href="{{ path('admin_location', {date: currentDate, view: 'D', closestTo: currentClosestTo ?? 'all'}) }}"
+               class="btn {{ currentView == 'D' ? 'btn-primary' : 'btn-secondary' }}">D</a>
+            <a href="{{ path('admin_location', {date: currentDate, view: 'W', closestTo: currentClosestTo ?? 'all'}) }}"
+               class="btn {{ currentView == 'W' ? 'btn-primary' : 'btn-secondary' }}">W</a>
+            <a href="{{ path('admin_location', {date: currentDate, view: 'M', closestTo: currentClosestTo ?? 'all'}) }}"
+               class="btn {{ currentView == 'M' ? 'btn-primary' : 'btn-secondary' }}">M</a>
+            <a href="{{ path('admin_location', {date: currentDate, view: 'Y', closestTo: currentClosestTo ?? 'all'}) }}"
+               class="btn {{ currentView == 'Y' ? 'btn-primary' : 'btn-secondary' }}">Y</a>
+            <a href="{{ path('admin_location', {date: currentDate, view: 'A', closestTo: currentClosestTo ?? 'all'}) }}"
+               class="btn {{ currentView == 'A' ? 'btn-primary' : 'btn-secondary' }}">All</a>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block main %}
+    <div class="mb-3 text-muted">
+        {{ fixCount }} fix{{ fixCount == 1 ? '' : 'es' }} shown
+        {% if hiddenCount > 0 %}
+            &mdash; {{ hiddenCount }} low-accuracy fix{{ hiddenCount == 1 ? '' : 'es' }} hidden (network-location fallback, not GPS)
+        {% endif %}
+    </div>
+
+    <div class="card card-body">
+        <div style="height: 600px; position: relative;">
+            <div id="locationMap" style="height: 100%; width: 100%;"
+                 data-icon-url="{{ asset('vendor/leaflet/dist/images/marker-icon.png') }}"
+                 data-icon-retina-url="{{ asset('vendor/leaflet/dist/images/marker-icon-2x.png') }}"
+                 data-shadow-url="{{ asset('vendor/leaflet/dist/images/marker-shadow.png') }}"
+            ></div>
+            {% if points is empty %}
+                <div class="position-absolute top-50 start-50 translate-middle text-muted">
+                    No location data for this period.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script id="map-data" type="application/json">
+        {{ points|json_encode|raw }}
+    </script>
+{% endblock %}
