@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**The LLM wiki:** many code comments in this repo say "see the LLM wiki's
+concepts/X.md" or "features/X.md" — that's `/root/.llmwiki` (also reachable
+from Windows at `\\wsl.localhost\Joi\root\.llmwiki`), a separate
+interlinked-markdown wiki covering this whole box (multiple projects, not
+just this repo). Read its `index.md` to find the page a comment is pointing
+at. This file (`CLAUDE.md`) stays the authoritative source for this repo's
+own conventions — the wiki holds cross-cutting/background concepts. See
+`AGENTS.md` for more.
+
 ## What this is
 
 JoisEyes PC-side companion service. A single-user Android app collects

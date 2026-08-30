@@ -6,6 +6,13 @@ an admin panel to browse the data. See `CLAUDE.md` and `docs/` for the full
 design/contract if you need it — this file is just "how do I run/operate
 this thing."
 
+**Before anything else:** code comments in this repo frequently say "see the
+LLM wiki's concepts/X.md" or "features/X.md" without saying where that is —
+it's `/root/.llmwiki` (also reachable from Windows at
+`\\wsl.localhost\Joi\root\.llmwiki`), a separate interlinked-markdown wiki
+covering this whole box, not just this repo. Start at its `index.md`. See
+`AGENTS.md` for how this repo and the wiki relate.
+
 ## Is it running right now?
 
 ```
