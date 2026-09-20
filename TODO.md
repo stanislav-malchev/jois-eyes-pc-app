@@ -2,7 +2,7 @@
 - host on GitHub. Squish all to single commit without DB first
 - mobile app: add oxygen and rebuild
 
-### Finance / Accounting (Phase 2 Complete)
+### Finance / Accounting (Phase 4 Complete)
 - [x] Database entities for Finance (Account, Transaction, etc.)
 - [x] Bank CSV Importer with fingerprinting and internal transfer detection
 - [x] CLI command `app:finance:import`
@@ -15,3 +15,9 @@
   - [x] Accountability Report ("The Game") logic
   - [x] CLI command `app:finance:report`
   - [x] Finance MCP tools for review and manual overrides
+- [x] Phase 4: Visual Dashboard & UX Integration
+  - [x] EasyAdmin dashboard widgets for finance stats
+  - [x] Full CRUD visibility for all finance entities
+  - [x] Purchase history widget for Products
+  - [x] Manual linking UI for Receipts and Transactions
+  - [x] Fuzzy matching improvements for linker
