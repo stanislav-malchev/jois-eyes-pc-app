@@ -1,0 +1,26 @@
+{% if field.value is empty %}
+    <span class="badge badge-secondary">No history</span>
+{% else %}
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Merchant</th>
+                <th>Qty</th>
+                <th>Unit Price</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in field.value %}
+                <tr>
+                    <td>{{ item.receipt.date ? item.receipt.date|date('Y-m-d') : 'N/A' }}</td>
+                    <td>{{ item.receipt.merchant }}</td>
+                    <td>{{ item.quantity }} {{ item.unit }}</td>
+                    <td>{{ item.unitPriceBgn }} BGN</td>
+                    <td>{{ item.totalBgn }} BGN</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}

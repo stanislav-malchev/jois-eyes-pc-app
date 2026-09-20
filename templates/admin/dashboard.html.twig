@@ -27,12 +27,27 @@
             <div class="jo-stat-label">Received last 24h</div>
         </div>
         <div class="jo-stat">
-            <div class="jo-stat-value">{{ deletedRecords }}</div>
-            <div class="jo-stat-label">Tombstoned</div>
-        </div>
-        <div class="jo-stat">
             <div class="jo-stat-value">{{ latestReceivedAt ? latestReceivedAt|date('Y-m-d H:i', 'Europe/Sofia') : '—' }}</div>
             <div class="jo-stat-label">Last sync received</div>
+        </div>
+    </div>
+
+    <div class="jo-stats">
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ financeStats.match_rate_percent }}%</div>
+            <div class="jo-stat-label">Match Rate (The Game)</div>
+        </div>
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ financeStats.matched_spending }} BGN</div>
+            <div class="jo-stat-label">Traceable Spend</div>
+        </div>
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ financeStats.spending }} BGN</div>
+            <div class="jo-stat-label">Total Spend</div>
+        </div>
+        <div class="jo-stat">
+            <div class="jo-stat-value">{{ financeStats.product_count }}</div>
+            <div class="jo-stat-label">Products Tracked</div>
         </div>
     </div>
 

@@ -4,6 +4,7 @@ namespace App\Controller\Admin;
 
 use App\Entity\NamedLocation;
 use App\Repository\RecordRepository;
+use App\Service\Finance\FinanceReportService;
 use EasyCorp\Bundle\EasyAdminBundle\Attribute\AdminDashboard;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Dashboard;
 use EasyCorp\Bundle\EasyAdminBundle\Config\MenuItem;
@@ -18,12 +19,14 @@ class DashboardController extends AbstractDashboardController
 {
     public function __construct(
         private readonly RecordRepository $records,
+        private readonly FinanceReportService $financeReportService,
     ) {
     }
 
     public function index(): Response
     {
         $since24h = (new \DateTimeImmutable())->modify('-24 hours');
+        $financeStats = $this->financeReportService->generateAccountabilityReport();
 
         return $this->render('admin/dashboard.html.twig', [
             'totalRecords' => $this->records->countAll(),
@@ -32,6 +35,7 @@ class DashboardController extends AbstractDashboardController
             'bySource' => $this->records->countGroupedBy('source'),
             'byType' => $this->records->countGroupedBy('type'),
             'latestReceivedAt' => $this->records->latestReceivedAt(),
+            'financeStats' => $financeStats,
         ]);
     }
 
@@ -57,5 +61,12 @@ class DashboardController extends AbstractDashboardController
         yield MenuItem::linkTo(NamedBluetoothDeviceCrudController::class, 'My BT Devices', 'fa fa-bluetooth-b');
         yield MenuItem::linkTo(RecordCrudController::class, 'All records', 'fa fa-list')
             ->setQueryParameter('filters[deleted]', 0);
+
+        yield MenuItem::section('Finance', 'fa fa-money-bill-wave');
+        yield MenuItem::linkTo(TransactionCrudController::class, 'Transactions', 'fa fa-exchange-alt');
+        yield MenuItem::linkTo(ReceiptCrudController::class, 'Receipts', 'fa fa-receipt');
+        yield MenuItem::linkTo(ProductCrudController::class, 'Products', 'fa fa-shopping-basket');
+        yield MenuItem::linkTo(CategoryCrudController::class, 'Categories', 'fa fa-tags');
+        yield MenuItem::linkTo(LineItemCrudController::class, 'Line Items', 'fa fa-list-ul');
     }
 }

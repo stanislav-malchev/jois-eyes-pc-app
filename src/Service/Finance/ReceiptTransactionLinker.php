@@ -48,8 +48,43 @@ class ReceiptTransactionLinker
             return true;
         }
 
-        // If multiple or zero found, we might need more complex matching (merchant name fuzzy match)
-        // For now, only auto-link if unique match by date/amount.
+        // Fuzzy matching on merchant name if amount matches but date might be slightly off
+        // OR if date matches but amount is slightly different (e.g. tip)
+        // For now, let's implement the suggested: same date, slight amount discrepancy + merchant fuzzy match
+
+        $qb = $this->entityManager->createQueryBuilder();
+        $qb->select('t')
+            ->from(Transaction::class, 't')
+            ->leftJoin(Receipt::class, 'r', 'WITH', 'r.transaction = t')
+            ->where('t.date = :date')
+            ->andWhere('r.id IS NULL')
+            ->andWhere('t.softDeleted = false')
+            ->setParameter('date', $receipt->getDate());
+
+        $potentialTransactions = $qb->getQuery()->getResult();
+        $bestMatch = null;
+        $bestScore = 999;
+
+        foreach ($potentialTransactions as $transaction) {
+            $amountDiff = abs((float)$transaction->getDebitBgn() - (float)$receipt->getTotalBgn());
+            // If amount matches exactly, we already tried unique match.
+            // Here we look for amount within 20% or 10 BGN discrepancy (tips)
+            if ($amountDiff > 0 && $amountDiff > 10 && $amountDiff > (float)$receipt->getTotalBgn() * 0.2) {
+                continue;
+            }
+
+            $lev = levenshtein(strtolower($receipt->getMerchant() ?? ''), strtolower($transaction->getCounterparty() ?? ''));
+            if ($lev < 5 && $lev < $bestScore) {
+                $bestScore = $lev;
+                $bestMatch = $transaction;
+            }
+        }
+
+        if ($bestMatch) {
+            $receipt->setTransaction($bestMatch);
+            $receipt->setStatus('matched_to_transaction');
+            return true;
+        }
 
         return false;
     }

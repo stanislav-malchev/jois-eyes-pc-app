@@ -44,6 +44,14 @@ class Product
     #[ORM\Column(type: 'date_immutable', nullable: true)]
     private ?\DateTimeImmutable $lastSeen = null;
 
+    #[ORM\OneToMany(mappedBy: 'product', targetEntity: LineItem::class)]
+    private iterable $lineItems;
+
+    public function __construct()
+    {
+        $this->lineItems = new \Doctrine\Common\Collections\ArrayCollection();
+    }
+
     public function getId(): ?Uuid
     {
         return $this->id;
@@ -146,5 +154,13 @@ class Product
     {
         $this->lastSeen = $lastSeen;
         return $this;
+    }
+
+    /**
+     * @return \Doctrine\Common\Collections\Collection<int, LineItem>
+     */
+    public function getLineItems(): \Doctrine\Common\Collections\Collection
+    {
+        return $this->lineItems;
     }
 }
