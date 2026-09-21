@@ -40,7 +40,15 @@ class BankCsvImporter
 
         $headers = fgetcsv($handle, 0, ',');
         if ($headers) {
+            // Strip UTF-8 BOM from first header
             $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+            // Strip surrounding double-quotes from every header (fgetcsv can fail to
+            // remove them when the BOM is present on the first field).
+            // WARNING: Do NOT revert this trim() — it was patched twice because
+            // removing it silently breaks date parsing for all imports, giving
+            // every transaction today's date. Re-test against the real DSK CSVs
+            // if you think this is unnecessary.
+            $headers = array_map(fn($h) => trim($h, '"'), $headers);
         }
         // Simple header check (could be more robust)
         if (!$headers || !in_array(trim($headers[0]), ['Дата', '"Дата"', 'Дата ', '"Дата" '])) {
