@@ -13,11 +13,13 @@ class BankCsvImporter
         'Дата',
         'Основание',
         'Наредител/Получател',
-        'IBAN/Сметка на Наредител/Получател',
+        'Номер сметка на наредителя / получателя',
         'Вид на трансакцията',
         'Свързваща референция',
-        'Дебит',
-        'Кредит',
+        'Дебит BGN',
+        'Кредит BGN',
+        'Валута',
+        'Транзакционна сума',
     ];
 
     public function __construct(
@@ -36,9 +38,12 @@ class BankCsvImporter
             throw new \RuntimeException("Failed to open file: $filePath");
         }
 
-        $headers = fgetcsv($handle, 0, ';');
+        $headers = fgetcsv($handle, 0, ',');
+        if ($headers) {
+            $headers[0] = preg_replace('/^\xEF\xBB\xBF/', '', $headers[0]);
+        }
         // Simple header check (could be more robust)
-        if (!$headers || !in_array('Дата', $headers)) {
+        if (!$headers || !in_array(trim($headers[0]), ['Дата', '"Дата"', 'Дата ', '"Дата" '])) {
             fclose($handle);
             throw new \RuntimeException("Invalid CSV format: Missing 'Дата' header.");
         }
@@ -52,7 +57,7 @@ class BankCsvImporter
             'errors' => 0,
         ];
 
-        while (($row = fgetcsv($handle, 0, ';')) !== false) {
+        while (($row = fgetcsv($handle, 0, ',')) !== false) {
             if (empty($row) || count($row) < count($headerMap)) {
                 continue;
             }
@@ -104,7 +109,27 @@ class BankCsvImporter
 
     private function mapRow(array $row, array $headerMap): array
     {
-        $get = fn($key) => isset($headerMap[$key]) ? trim($row[$headerMap[$key]]) : null;
+        $get = function(string $key) use ($headerMap, $row) {
+            // Try exact match first
+            if (isset($headerMap[$key])) {
+                return isset($row[$headerMap[$key]]) ? trim($row[$headerMap[$key]]) : null;
+            }
+            // Try prefix matching across headerMap keys
+            foreach ($headerMap as $header => $index) {
+                if (str_starts_with($header, $key)) {
+                    return isset($row[$index]) ? trim($row[$index]) : null;
+                }
+            }
+            // Fallback for counterparty account header variant ("Номер сметка на наредителя / получателя")
+            if ($key === 'IBAN/Сметка на Наредител/Получател') {
+                foreach ($headerMap as $header => $index) {
+                    if (str_starts_with($header, 'Номер сметка') || str_starts_with($header, 'IBAN/Сметка')) {
+                        return isset($row[$index]) ? trim($row[$index]) : null;
+                    }
+                }
+            }
+            return null;
+        };
 
         $debit = $get('Дебит');
         $credit = $get('Кредит');

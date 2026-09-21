@@ -65,4 +65,38 @@ class BankCsvImporterTest extends TestCase
         $this->assertTrue($transaction->isSoftDeleted());
         $this->assertEquals('own_transfer', $transaction->getSoftDeleteReason());
     }
+
+    public function testMapRowWithPrefixMatchingAndBom()
+    {
+        $csvContent = "\xEF\xBB\xBFДата,Основание,Наредител/Получател,Номер сметка на наредителя / получателя,Вид на трансакцията,Свързваща референция,Дебит BGN,Кредит BGN\n" .
+                      "01.06.2025,TEST DESC,TEST COUNTERPARTY,BG12STSA30000000000000,КАРТОВА ОПЕРАЦИЯ,,\"10,50\",\n";
+        
+        $tmpFile = tempnam(sys_get_temp_dir(), 'dsk_test_');
+        file_put_contents($tmpFile, $csvContent);
+
+        $account = new Account();
+        $account->setName('Test Account');
+
+        $repo = $this->createMock(EntityRepository::class);
+        $repo->method('findOneBy')->willReturn(null);
+
+        $this->entityManager->method('getRepository')
+            ->with(Transaction::class)
+            ->willReturn($repo);
+
+        $this->entityManager->expects($this->once())
+            ->method('persist')
+            ->with($this->callback(function (Transaction $t) {
+                return $t->getDate()->format('Y-m-d') === '2025-06-01'
+                    && $t->getDescription() === 'TEST DESC'
+                    && $t->getCounterparty() === 'TEST COUNTERPARTY'
+                    && $t->getCounterpartyAccount() === 'BG12STSA30000000000000'
+                    && $t->getDebitBgn() === '10.50';
+            }));
+
+        $stats = $this->importer->import($tmpFile, $account);
+        unlink($tmpFile);
+
+        $this->assertEquals(1, $stats['imported']);
+    }
 }
