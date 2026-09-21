@@ -37,8 +37,9 @@ list — this repo doesn't own the wiki and it will drift):
 - `concepts/snapshot-contract.md` / `raw/joiseyes/joiseyes-backdoor-v1.md` —
   the phone's `/v1/snapshot` backdoor contract this repo's
   `src/Backdoor/SnapshotClient.php` consumes
-- `features/current-state-tool.md`, `features/pc-state-tool.md` — design
-  notes for the MCP tools in `src/MCP/Tools/`
+- `features/current-state-tool.md`, `features/pc-state-tool.md`, `features/finance-feature.md` — design
+  notes and skill guides for the MCP tools in `src/MCP/Tools/` (see also
+  `docs/finance-feature.md` in this repo)
 
 ## Division of labor
 

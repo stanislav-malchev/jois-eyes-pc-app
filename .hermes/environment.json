@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "recipe": {
+    "name": "docker-compose project",
+    "kind": "compose",
+    "bootstrap": [],
+    "build": [
+      "docker compose build"
+    ],
+    "test": [],
+    "start": "docker compose up",
+    "port": null,
+    "readinessPath": "/",
+    "evidence": [
+      "Detected compose.yaml"
+    ]
+  },
+  "updatedAt": "2026-09-21T07:07:28.629346+00:00"
+}

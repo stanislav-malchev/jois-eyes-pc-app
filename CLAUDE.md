@@ -170,6 +170,9 @@ tailnet-only, single user.
   `location`-source record vs. `HOME_LATITUDE`/`HOME_LONGITUDE` (in
   `.env.local`, gitignored — real coordinates must never land in `.env` or
   get committed). 500m haversine radius to absorb GPS drift.
+- `finance` — bank statement CSV imports (`import_csv`), review and reconciliation tools ("The Game"),
+  unmatched/unprocessed receipts, product history/merging, and manual receipt
+  linking (see `docs/finance-feature.md`).
 - Test tools from the CLI without a real MCP client:
   `php bin/console mcp:test-tool --list` /
   `php bin/console mcp:test-tool <name>`.

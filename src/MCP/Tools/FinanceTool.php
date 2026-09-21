@@ -6,12 +6,19 @@ use App\Entity\Product;
 use App\Entity\Receipt;
 use App\Entity\Transaction;
 use App\Entity\LineItem;
+use App\Entity\Account;
 use App\Service\Finance\FinanceReportService;
+use App\Service\Finance\BankCsvImporter;
+use App\Service\Finance\ReceiptOcrProcessor;
+use App\Service\Finance\ReceiptTransactionLinker;
+use App\Service\Finance\ProductLinker;
 use Doctrine\ORM\EntityManagerInterface;
 use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
 use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
 use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
 use KLP\KlpMcpServer\Services\ToolService\Result\ToolResultInterface;
+use KLP\KlpMcpServer\Services\ToolService\Schema\PropertyType;
+use KLP\KlpMcpServer\Services\ToolService\Schema\SchemaProperty;
 use KLP\KlpMcpServer\Services\ToolService\Schema\StructuredSchema;
 use KLP\KlpMcpServer\Services\ToolService\StreamableToolInterface;
 
@@ -19,7 +26,11 @@ class FinanceTool implements StreamableToolInterface
 {
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
-        private readonly FinanceReportService $reportService
+        private readonly FinanceReportService $reportService,
+        private readonly BankCsvImporter $bankCsvImporter,
+        private readonly ReceiptOcrProcessor $ocrProcessor,
+        private readonly ReceiptTransactionLinker $transactionLinker,
+        private readonly ProductLinker $productLinker
     ) {
     }
 
@@ -36,46 +47,67 @@ class FinanceTool implements StreamableToolInterface
 - `list_unprocessed_receipts`: Show receipts linked to transactions but missing detailed line items.
 - `product_history`: Get purchase history for a specific product by name.
 - `merge_products`: Merge two products (source_name -> target_name).
-- `link_receipt`: Manually link a receipt (UUID) to a transaction (UUID).';
+- `link_receipt`: Manually link a receipt (UUID) to a transaction (UUID).
+- `import_csv`: Import bank statement CSV file into an account (`file_path`, `account`).
+- `process_receipts`: Ingest receipt OCR JSON data and link receipts/line items (`ocr_json_path` or `file_path`).';
     }
 
     public function getInputSchema(): StructuredSchema
     {
-        return new StructuredSchema([
-            'type' => 'object',
-            'properties' => [
-                'action' => [
-                    'type' => 'string',
-                    'enum' => ['report', 'list_unmatched_receipts', 'list_unprocessed_receipts', 'product_history', 'merge_products', 'link_receipt'],
-                    'description' => 'The action to perform.'
-                ],
-                'start_date' => [
-                    'type' => 'string',
-                    'description' => 'Start date (YYYY-MM-DD) for report or history.'
-                ],
-                'end_date' => [
-                    'type' => 'string',
-                    'description' => 'End date (YYYY-MM-DD) for report or history.'
-                ],
-                'product_name' => [
-                    'type' => 'string',
-                    'description' => 'Product name for history or merge.'
-                ],
-                'target_product_name' => [
-                    'type' => 'string',
-                    'description' => 'Target product name for merge.'
-                ],
-                'receipt_id' => [
-                    'type' => 'string',
-                    'description' => 'Receipt UUID.'
-                ],
-                'transaction_id' => [
-                    'type' => 'string',
-                    'description' => 'Transaction UUID.'
-                ],
-            ],
-            'required' => ['action']
-        ]);
+        return new StructuredSchema(
+                    new SchemaProperty(
+                        name: 'action',
+                        type: PropertyType::STRING,
+                        description: 'The action to perform.',
+                        enum: ['report', 'list_unmatched_receipts', 'list_unprocessed_receipts', 'product_history', 'merge_products', 'link_receipt', 'import_csv', 'import', 'process_receipts', 'ingest_receipts'],
+                        required: true,
+                    ),
+                    new SchemaProperty(
+                        name: 'start_date',
+                        type: PropertyType::STRING,
+                        description: 'Start date (YYYY-MM-DD) for report or history.',
+                    ),
+                    new SchemaProperty(
+                        name: 'end_date',
+                        type: PropertyType::STRING,
+                        description: 'End date (YYYY-MM-DD) for report or history.',
+                    ),
+                    new SchemaProperty(
+                        name: 'product_name',
+                        type: PropertyType::STRING,
+                        description: 'Product name for history or merge.',
+                    ),
+                    new SchemaProperty(
+                        name: 'target_product_name',
+                        type: PropertyType::STRING,
+                        description: 'Target product name for merge.',
+                    ),
+                    new SchemaProperty(
+                        name: 'receipt_id',
+                        type: PropertyType::STRING,
+                        description: 'Receipt UUID.',
+                    ),
+                    new SchemaProperty(
+                        name: 'transaction_id',
+                        type: PropertyType::STRING,
+                        description: 'Transaction UUID.',
+                    ),
+                    new SchemaProperty(
+                        name: 'file_path',
+                        type: PropertyType::STRING,
+                        description: 'Path to the CSV file for import.',
+                    ),
+                    new SchemaProperty(
+                        name: 'account',
+                        type: PropertyType::STRING,
+                        description: 'Account UUID or Name for import.',
+                    ),
+                    new SchemaProperty(
+                        name: 'ocr_json_path',
+                        type: PropertyType::STRING,
+                        description: 'Path to OCR JSON file for receipt ingestion.',
+                    ),
+                );
     }
 
     public function getOutputSchema(): ?StructuredSchema
@@ -105,6 +137,8 @@ class FinanceTool implements StreamableToolInterface
             'product_history' => $this->handleProductHistory($arguments),
             'merge_products' => $this->handleMergeProducts($arguments),
             'link_receipt' => $this->handleLinkReceipt($arguments),
+            'import_csv', 'import' => $this->handleImportCsv($arguments),
+            'process_receipts', 'ingest_receipts' => $this->handleProcessReceipts($arguments),
             default => new StructuredToolResult(['error' => 'Unknown action']),
         };
     }
@@ -225,6 +259,84 @@ class FinanceTool implements StreamableToolInterface
         $this->entityManager->flush();
 
         return new StructuredToolResult(['status' => 'success', 'message' => 'Manually linked']);
+    }
+
+    private function handleImportCsv(array $args): ToolResultInterface
+    {
+        $filePath = $args['file_path'] ?? $args['file'] ?? null;
+        $accountRef = $args['account'] ?? null;
+
+        if (!$filePath || !$accountRef) {
+            return new StructuredToolResult(['error' => 'Both file_path and account required']);
+        }
+
+        if (!file_exists($filePath)) {
+            return new StructuredToolResult(['error' => "File not found: $filePath"]);
+        }
+
+        $account = $this->entityManager->getRepository(Account::class)->find($accountRef);
+        if (!$account) {
+            $account = $this->entityManager->getRepository(Account::class)->findOneBy(['name' => $accountRef]);
+        }
+
+        if (!$account) {
+            return new StructuredToolResult(['error' => sprintf('Account "%s" not found', $accountRef)]);
+        }
+
+        try {
+            $stats = $this->bankCsvImporter->import($filePath, $account);
+            return new StructuredToolResult([
+                'status' => 'success',
+                'account' => $account->getName(),
+                'file' => basename($filePath),
+                'stats' => $stats,
+            ]);
+        } catch (\Exception $e) {
+            return new StructuredToolResult(['error' => $e->getMessage()]);
+        }
+    }
+
+    private function handleProcessReceipts(array $args): ToolResultInterface
+    {
+        $filePath = $args['ocr_json_path'] ?? $args['file_path'] ?? $args['file'] ?? null;
+        $ingestedCount = 0;
+        $ingestedDetails = [];
+
+        if ($filePath) {
+            if (!file_exists($filePath)) {
+                return new StructuredToolResult(['error' => "OCR JSON file not found: $filePath"]);
+            }
+
+            $content = file_get_contents($filePath);
+            $data = json_decode($content, true);
+            if (null === $data) {
+                return new StructuredToolResult(['error' => 'Invalid JSON in OCR file.']);
+            }
+
+            $receiptsData = isset($data['merchant']) ? [$data] : $data;
+
+            foreach ($receiptsData as $rData) {
+                $receipt = $this->ocrProcessor->processOcrData($rData);
+                $ingestedCount++;
+                $ingestedDetails[] = [
+                    'merchant' => $receipt->getMerchant(),
+                    'date' => $receipt->getDate()?->format('Y-m-d'),
+                    'total' => $receipt->getTotalBgn(),
+                ];
+            }
+            $this->entityManager->flush();
+        }
+
+        $linkedTransactions = $this->transactionLinker->linkAllUnmatched();
+        $linkedProducts = $this->productLinker->linkAllUnlinked();
+
+        return new StructuredToolResult([
+            'status' => 'success',
+            'ingested_receipts_count' => $ingestedCount,
+            'ingested_receipts' => $ingestedDetails,
+            'linked_transactions_count' => $linkedTransactions,
+            'linked_line_items_count' => $linkedProducts,
+        ]);
     }
 
     public function isStreaming(): bool

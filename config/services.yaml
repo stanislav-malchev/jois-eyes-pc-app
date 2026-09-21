@@ -36,6 +36,9 @@ services:
     App\MCP\Tools\PcStateTool:
         public: true
 
+    App\MCP\Tools\FinanceTool:
+        public: true
+
     App\Scheduler\ConsolidateMessageHandler:
         arguments:
             $liveDeletes: '%app.consolidation_live_deletes%'

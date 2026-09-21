@@ -1,0 +1,398 @@
+Command finished with exit code 0.
+Command output:
+warning: in the working copy of '.junie/skills/finance-feature/SKILL.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'AGENTS.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'docs/finance-feature.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/MCP/Tools/FinanceToolTest.php', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.junie/skills/finance-feature/SKILL.md b/.junie/skills/finance-feature/SKILL.md
+index 18afcd4..e894bdf 100644
+--- a/.junie/skills/finance-feature/SKILL.md
++++ b/.junie/skills/finance-feature/SKILL.md
+@@ -27,6 +27,8 @@ Exposes tools via MCP for review and reconciliation:
+ - `product_history`: Get purchase history for a specific product by name.
+ - `merge_products`: Merge two products (`source_name` -> `target_name`).
+ - `link_receipt`: Manually link a receipt (UUID) to a transaction (UUID).
++- `import_csv`: Import bank statement CSV file into an account (`file_path`, `account`).
++- `process_receipts`: Ingest receipt OCR JSON data and link receipts/line items (`ocr_json_path` or `file_path`).
+ 
+ #### Guidelines for Developers & Agents
+ 1. Always reference `/root/.llmwiki/finance-import-concept.md` for background context on architectural decisions, DSK CSV quirks, and reconciliation rules.
+diff --git a/AGENTS.md b/AGENTS.md
+index f6755d2..7547c14 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -37,8 +37,9 @@ list — this repo doesn't own the wiki and it will drift):
+ - `concepts/snapshot-contract.md` / `raw/joiseyes/joiseyes-backdoor-v1.md` —
+   the phone's `/v1/snapshot` backdoor contract this repo's
+   `src/Backdoor/SnapshotClient.php` consumes
+-- `features/current-state-tool.md`, `features/pc-state-tool.md` — design
+-  notes for the MCP tools in `src/MCP/Tools/`
++- `features/current-state-tool.md`, `features/pc-state-tool.md`, `features/finance-feature.md` — design
++  notes and skill guides for the MCP tools in `src/MCP/Tools/` (see also
++  `docs/finance-feature.md` in this repo)
+ 
+ ## Division of labor
+ 
+diff --git a/CLAUDE.md b/CLAUDE.md
+index c7332c2..b8f2fa4 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -170,6 +170,9 @@ tailnet-only, single user.
+   `location`-source record vs. `HOME_LATITUDE`/`HOME_LONGITUDE` (in
+   `.env.local`, gitignored — real coordinates must never land in `.env` or
+   get committed). 500m haversine radius to absorb GPS drift.
++- `finance` — bank statement CSV imports (`import_csv`), review and reconciliation tools ("The Game"),
++  unmatched/unprocessed receipts, product history/merging, and manual receipt
++  linking (see `docs/finance-feature.md`).
+ - Test tools from the CLI without a real MCP client:
+   `php bin/console mcp:test-tool --list` /
+   `php bin/console mcp:test-tool <name>`.
+diff --git a/config/packages/klp_mcp_server.yaml b/config/packages/klp_mcp_server.yaml
+index 0686a17..d2eef6c 100644
+--- a/config/packages/klp_mcp_server.yaml
++++ b/config/packages/klp_mcp_server.yaml
+@@ -25,6 +25,7 @@ klp_mcp_server:
+     tools:
+         - App\MCP\Tools\CurrentStateTool
+         - App\MCP\Tools\PcStateTool
++        - App\MCP\Tools\FinanceTool
+ 
+     prompts: []
+ 
+diff --git a/config/services.yaml b/config/services.yaml
+index 76a722a..380a303 100644
+--- a/config/services.yaml
++++ b/config/services.yaml
+@@ -36,6 +36,9 @@ services:
+     App\MCP\Tools\PcStateTool:
+         public: true
+ 
++    App\MCP\Tools\FinanceTool:
++        public: true
++
+     App\Scheduler\ConsolidateMessageHandler:
+         arguments:
+             $liveDeletes: '%app.consolidation_live_deletes%'
+diff --git a/docs/finance-feature.md b/docs/finance-feature.md
+index 5064628..5e72e67 100644
+--- a/docs/finance-feature.md
++++ b/docs/finance-feature.md
+@@ -30,6 +30,8 @@ Exposed via `App\MCP\Tools\FinanceTool` at `/mcp`:
+ - `product_history`: Get purchase history and lifetime statistics for a specific product (`product_name`).
+ - `merge_products`: Merge two products (`product_name` -> `target_product_name`), re-linking all line items.
+ - `link_receipt`: Manually link a receipt (`receipt_id`) to a transaction (`transaction_id`) via UUIDs.
++- `import_csv`: Import bank statement CSV file into an account (`file_path`, `account`).
++- `process_receipts`: Ingest receipt OCR JSON data and link receipts/line items (`ocr_json_path` or `file_path`).
+ 
+ ## Developer Guidelines
+ 
+diff --git a/src/MCP/Tools/FinanceTool.php b/src/MCP/Tools/FinanceTool.php
+index 82a77c7..04a6b3b 100644
+--- a/src/MCP/Tools/FinanceTool.php
++++ b/src/MCP/Tools/FinanceTool.php
+@@ -6,12 +6,19 @@ use App\Entity\Product;
+ use App\Entity\Receipt;
+ use App\Entity\Transaction;
+ use App\Entity\LineItem;
++use App\Entity\Account;
+ use App\Service\Finance\FinanceReportService;
++use App\Service\Finance\BankCsvImporter;
++use App\Service\Finance\ReceiptOcrProcessor;
++use App\Service\Finance\ReceiptTransactionLinker;
++use App\Service\Finance\ProductLinker;
+ use Doctrine\ORM\EntityManagerInterface;
+ use KLP\KlpMcpServer\Services\ProgressService\ProgressNotifierInterface;
+ use KLP\KlpMcpServer\Services\ToolService\Annotation\ToolAnnotation;
+ use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
+ use KLP\KlpMcpServer\Services\ToolService\Result\ToolResultInterface;
++use KLP\KlpMcpServer\Services\ToolService\Schema\PropertyType;
++use KLP\KlpMcpServer\Services\ToolService\Schema\SchemaProperty;
+ use KLP\KlpMcpServer\Services\ToolService\Schema\StructuredSchema;
+ use KLP\KlpMcpServer\Services\ToolService\StreamableToolInterface;
+ 
+@@ -19,7 +26,11 @@ class FinanceTool implements StreamableToolInterface
+ {
+     public function __construct(
+         private readonly EntityManagerInterface $entityManager,
+-        private readonly FinanceReportService $reportService
++        private readonly FinanceReportService $reportService,
++        private readonly BankCsvImporter $bankCsvImporter,
++        private readonly ReceiptOcrProcessor $ocrProcessor,
++        private readonly ReceiptTransactionLinker $transactionLinker,
++        private readonly ProductLinker $productLinker
+     ) {
+     }
+ 
+@@ -36,46 +47,67 @@ class FinanceTool implements StreamableToolInterface
+ - `list_unprocessed_receipts`: Show receipts linked to transactions but missing detailed line items.
+ - `product_history`: Get purchase history for a specific product by name.
+ - `merge_products`: Merge two products (source_name -> target_name).
+-- `link_receipt`: Manually link a receipt (UUID) to a transaction (UUID).';
++- `link_receipt`: Manually link a receipt (UUID) to a transaction (UUID).
++- `import_csv`: Import bank statement CSV file into an account (`file_path`, `account`).
++- `process_receipts`: Ingest receipt OCR JSON data and link receipts/line items (`ocr_json_path` or `file_path`).';
+     }
+ 
+     public function getInputSchema(): StructuredSchema
+     {
+-        return new StructuredSchema([
+-            'type' => 'object',
+-            'properties' => [
+-                'action' => [
+-                    'type' => 'string',
+-                    'enum' => ['report', 'list_unmatched_receipts', 'list_unprocessed_receipts', 'product_history', 'merge_products', 'link_receipt'],
+-                    'description' => 'The action to perform.'
+-                ],
+-                'start_date' => [
+-                    'type' => 'string',
+-                    'description' => 'Start date (YYYY-MM-DD) for report or history.'
+-                ],
+-                'end_date' => [
+-                    'type' => 'string',
+-                    'description' => 'End date (YYYY-MM-DD) for report or history.'
+-                ],
+-                'product_name' => [
+-                    'type' => 'string',
+-                    'description' => 'Product name for history or merge.'
+-                ],
+-                'target_product_name' => [
+-                    'type' => 'string',
+-                    'description' => 'Target product name for merge.'
+-                ],
+-                'receipt_id' => [
+-                    'type' => 'string',
+-                    'description' => 'Receipt UUID.'
+-                ],
+-                'transaction_id' => [
+-                    'type' => 'string',
+-                    'description' => 'Transaction UUID.'
+-                ],
+-            ],
+-            'required' => ['action']
+-        ]);
++        return new StructuredSchema(
++                    new SchemaProperty(
++                        name: 'action',
++                        type: PropertyType::STRING,
++                        description: 'The action to perform.',
++                        enum: ['report', 'list_unmatched_receipts', 'list_unprocessed_receipts', 'product_history', 'merge_products', 'link_receipt', 'import_csv', 'import', 'process_receipts', 'ingest_receipts'],
++                        required: true,
++                    ),
++                    new SchemaProperty(
++                        name: 'start_date',
++                        type: PropertyType::STRING,
++                        description: 'Start date (YYYY-MM-DD) for report or history.',
++                    ),
++                    new SchemaProperty(
++                        name: 'end_date',
++                        type: PropertyType::STRING,
++                        description: 'End date (YYYY-MM-DD) for report or history.',
++                    ),
++                    new SchemaProperty(
++                        name: 'product_name',
++                        type: PropertyType::STRING,
++                        description: 'Product name for history or merge.',
++                    ),
++                    new SchemaProperty(
++                        name: 'target_product_name',
++                        type: PropertyType::STRING,
++                        description: 'Target product name for merge.',
++                    ),
++                    new SchemaProperty(
++                        name: 'receipt_id',
++                        type: PropertyType::STRING,
++                        description: 'Receipt UUID.',
++                    ),
++                    new SchemaProperty(
++                        name: 'transaction_id',
++                        type: PropertyType::STRING,
++                        description: 'Transaction UUID.',
++                    ),
++                    new SchemaProperty(
++                        name: 'file_path',
++                        type: PropertyType::STRING,
++                        description: 'Path to the CSV file for import.',
++                    ),
++                    new SchemaProperty(
++                        name: 'account',
++                        type: PropertyType::STRING,
++                        description: 'Account UUID or Name for import.',
++                    ),
++                    new SchemaProperty(
++                        name: 'ocr_json_path',
++                        type: PropertyType::STRING,
++                        description: 'Path to OCR JSON file for receipt ingestion.',
++                    ),
++                );
+     }
+ 
+     public function getOutputSchema(): ?StructuredSchema
+@@ -105,6 +137,8 @@ class FinanceTool implements StreamableToolInterface
+             'product_history' => $this->handleProductHistory($arguments),
+             'merge_products' => $this->handleMergeProducts($arguments),
+             'link_receipt' => $this->handleLinkReceipt($arguments),
++            'import_csv', 'import' => $this->handleImportCsv($arguments),
++            'process_receipts', 'ingest_receipts' => $this->handleProcessReceipts($arguments),
+             default => new StructuredToolResult(['error' => 'Unknown action']),
+         };
+     }
+@@ -227,6 +261,84 @@ class FinanceTool implements StreamableToolInterface
+         return new StructuredToolResult(['status' => 'success', 'message' => 'Manually linked']);
+     }
+ 
++    private function handleImportCsv(array $args): ToolResultInterface
++    {
++        $filePath = $args['file_path'] ?? $args['file'] ?? null;
++        $accountRef = $args['account'] ?? null;
++
++        if (!$filePath || !$accountRef) {
++            return new StructuredToolResult(['error' => 'Both file_path and account required']);
++        }
++
++        if (!file_exists($filePath)) {
++            return new StructuredToolResult(['error' => "File not found: $filePath"]);
++        }
++
++        $account = $this->entityManager->getRepository(Account::class)->find($accountRef);
++        if (!$account) {
++            $account = $this->entityManager->getRepository(Account::class)->findOneBy(['name' => $accountRef]);
++        }
++
++        if (!$account) {
++            return new StructuredToolResult(['error' => sprintf('Account "%s" not found', $accountRef)]);
++        }
++
++        try {
++            $stats = $this->bankCsvImporter->import($filePath, $account);
++            return new StructuredToolResult([
++                'status' => 'success',
++                'account' => $account->getName(),
++                'file' => basename($filePath),
++                'stats' => $stats,
++            ]);
++        } catch (\Exception $e) {
++            return new StructuredToolResult(['error' => $e->getMessage()]);
++        }
++    }
++
++    private function handleProcessReceipts(array $args): ToolResultInterface
++    {
++        $filePath = $args['ocr_json_path'] ?? $args['file_path'] ?? $args['file'] ?? null;
++        $ingestedCount = 0;
++        $ingestedDetails = [];
++
++        if ($filePath) {
++            if (!file_exists($filePath)) {
++                return new StructuredToolResult(['error' => "OCR JSON file not found: $filePath"]);
++            }
++
++            $content = file_get_contents($filePath);
++            $data = json_decode($content, true);
++            if (null === $data) {
++                return new StructuredToolResult(['error' => 'Invalid JSON in OCR file.']);
++            }
++
++            $receiptsData = isset($data['merchant']) ? [$data] : $data;
++
++            foreach ($receiptsData as $rData) {
++                $receipt = $this->ocrProcessor->processOcrData($rData);
++                $ingestedCount++;
++                $ingestedDetails[] = [
++                    'merchant' => $receipt->getMerchant(),
++                    'date' => $receipt->getDate()?->format('Y-m-d'),
++                    'total' => $receipt->getTotalBgn(),
++                ];
++            }
++            $this->entityManager->flush();
++        }
++
++        $linkedTransactions = $this->transactionLinker->linkAllUnmatched();
++        $linkedProducts = $this->productLinker->linkAllUnlinked();
++
++        return new StructuredToolResult([
++            'status' => 'success',
++            'ingested_receipts_count' => $ingestedCount,
++            'ingested_receipts' => $ingestedDetails,
++            'linked_transactions_count' => $linkedTransactions,
++            'linked_line_items_count' => $linkedProducts,
++        ]);
++    }
++
+     public function isStreaming(): bool
+     {
+         return false;
+diff --git a/tests/MCP/Tools/FinanceToolTest.php b/tests/MCP/Tools/FinanceToolTest.php
+index 649f2af..03db4ff 100644
+--- a/tests/MCP/Tools/FinanceToolTest.php
++++ b/tests/MCP/Tools/FinanceToolTest.php
+@@ -4,6 +4,10 @@ namespace App\Tests\MCP\Tools;
+ 
+ use App\MCP\Tools\FinanceTool;
+ use App\Service\Finance\FinanceReportService;
++use App\Service\Finance\BankCsvImporter;
++use App\Service\Finance\ReceiptOcrProcessor;
++use App\Service\Finance\ReceiptTransactionLinker;
++use App\Service\Finance\ProductLinker;
+ use Doctrine\ORM\EntityManagerInterface;
+ use KLP\KlpMcpServer\Services\ToolService\Result\StructuredToolResult;
+ use PHPUnit\Framework\TestCase;
+@@ -18,11 +22,15 @@ use PHPUnit\Framework\TestCase;
+  */
+ class FinanceToolTest extends TestCase
+ {
+-    private function tool(?FinanceReportService $reportService = null): FinanceTool
++    private function tool(?FinanceReportService $reportService = null, ?BankCsvImporter $bankCsvImporter = null, ?ReceiptOcrProcessor $ocrProcessor = null, ?ReceiptTransactionLinker $transactionLinker = null, ?ProductLinker $productLinker = null): FinanceTool
+     {
+         return new FinanceTool(
+             $this->createStub(EntityManagerInterface::class),
+             $reportService ?? $this->createStub(FinanceReportService::class),
++            $bankCsvImporter ?? $this->createStub(BankCsvImporter::class),
++            $ocrProcessor ?? $this->createStub(ReceiptOcrProcessor::class),
++            $transactionLinker ?? $this->createStub(ReceiptTransactionLinker::class),
++            $productLinker ?? $this->createStub(ProductLinker::class),
+         );
+     }
+ 
+@@ -55,6 +63,9 @@ class FinanceToolTest extends TestCase
+             'target_product_name',
+             'receipt_id',
+             'transaction_id',
++            'file_path',
++            'account',
++            'ocr_json_path',
+         ], array_keys($schema['properties']));
+     }
+ 
+@@ -69,6 +80,10 @@ class FinanceToolTest extends TestCase
+             'product_history',
+             'merge_products',
+             'link_receipt',
++            'import_csv',
++            'import',
++            'process_receipts',
++            'ingest_receipts',
+         ], $properties['action']['enum']);
+     }
+ 
+@@ -109,4 +124,21 @@ class FinanceToolTest extends TestCase
+ 
+         self::assertSame(['error' => 'product_name required'], $result->getStructuredValue());
+     }
++
++    public function testImportCsvWithoutRequiredParamsIsAnError(): void
++    {
++        $result = $this->tool()->execute(['action' => 'import_csv']);
++
++        self::assertSame(['error' => 'Both file_path and account required'], $result->getStructuredValue());
++    }
++
++    public function testProcessReceiptsMissingFileReturnsError(): void
++    {
++        $result = $this->tool()->execute([
++            'action' => 'process_receipts',
++            'ocr_json_path' => '/nonexistent/path/receipt.json',
++        ]);
++
++        self::assertSame(['error' => 'OCR JSON file not found: /nonexistent/path/receipt.json'], $result->getStructuredValue());
++    }
+ }
