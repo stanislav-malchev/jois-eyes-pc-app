@@ -2,9 +2,11 @@
 
 namespace App\Controller\Admin;
 
+use App\Entity\Account;
 use App\Entity\NamedLocation;
 use App\Repository\RecordRepository;
 use App\Service\Finance\FinanceReportService;
+use Doctrine\ORM\EntityManagerInterface;
 use EasyCorp\Bundle\EasyAdminBundle\Attribute\AdminDashboard;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Dashboard;
 use EasyCorp\Bundle\EasyAdminBundle\Config\MenuItem;
@@ -20,6 +22,7 @@ class DashboardController extends AbstractDashboardController
     public function __construct(
         private readonly RecordRepository $records,
         private readonly FinanceReportService $financeReportService,
+        private readonly EntityManagerInterface $entityManager,
     ) {
     }
 
@@ -36,6 +39,7 @@ class DashboardController extends AbstractDashboardController
             'byType' => $this->records->countGroupedBy('type'),
             'latestReceivedAt' => $this->records->latestReceivedAt(),
             'financeStats' => $financeStats,
+            'accounts' => $this->entityManager->getRepository(Account::class)->findAll(),
         ]);
     }
 
@@ -63,7 +67,9 @@ class DashboardController extends AbstractDashboardController
             ->setQueryParameter('filters[deleted]', 0);
 
         yield MenuItem::section('Finance', 'fa fa-money-bill-wave');
-        yield MenuItem::linkTo(TransactionCrudController::class, 'Transactions', 'fa fa-exchange-alt');
+        yield MenuItem::linkTo(AccountCrudController::class, 'Accounts', 'fa fa-wallet');
+        yield MenuItem::linkTo(TransactionCrudController::class, 'Transactions', 'fa fa-exchange-alt')
+            ->setQueryParameter('filters[softDeleted]', 0);
         yield MenuItem::linkTo(ReceiptCrudController::class, 'Receipts', 'fa fa-receipt');
         yield MenuItem::linkTo(ProductCrudController::class, 'Products', 'fa fa-shopping-basket');
         yield MenuItem::linkTo(CategoryCrudController::class, 'Categories', 'fa fa-tags');

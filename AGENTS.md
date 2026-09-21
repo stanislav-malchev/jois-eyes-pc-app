@@ -39,7 +39,7 @@ list — this repo doesn't own the wiki and it will drift):
   `src/Backdoor/SnapshotClient.php` consumes
 - `features/current-state-tool.md`, `features/pc-state-tool.md`, `features/finance-feature.md` — design
   notes and skill guides for the MCP tools in `src/MCP/Tools/` (see also
-  `docs/finance-feature.md` in this repo)
+  `docs/finance-feature.md` in this repo; note: default currency is EUR (not a flag), and pre-2026 CSV import values in BGN before Jan 1st 2026 are flagged as BGN and automatically converted to EUR using the official fixed exchange rate of 1 EUR = 1.95583 BGN).
 
 ## Division of labor
 

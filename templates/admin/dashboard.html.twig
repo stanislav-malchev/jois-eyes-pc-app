@@ -52,6 +52,34 @@
     </div>
 
     <div class="jo-breakdowns">
+        <div class="jo-breakdown" style="flex: 2; min-width: 100%;">
+            <h3>Accounts</h3>
+            {% if accounts is empty %}
+                <p class="jo-empty">No accounts configured.</p>
+            {% else %}
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="text-align: left; padding: 4px 0;">Name</th>
+                            <th style="text-align: left; padding: 4px 0;">IBAN</th>
+                            <th style="text-align: left; padding: 4px 0;">Currency</th>
+                            <th style="text-align: left; padding: 4px 0;">Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for account in accounts %}
+                            <tr>
+                                <td>{{ account.name }}</td>
+                                <td>{{ account.iban ?: '—' }}</td>
+                                <td>{{ account.currency }}</td>
+                                <td>{{ account.type }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% endif %}
+        </div>
+
         <div class="jo-breakdown">
             <h3>By source</h3>
             {% if bySource is empty %}

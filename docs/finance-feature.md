@@ -6,6 +6,10 @@ This document defines the architecture, data model, deduplication logic, and MCP
 
 The Finance module handles bank statement imports (CSV, e.g., DSK Bank), receipt OCR parsing, line item extraction, product canonicalization, and financial reconciliation ("The Game" accountability reports).
 
+**Key Rules & Currency**:
+- **Default Currency**: EUR (not a flag).
+- **Pre-2026 Conversion**: Bank CSV statement imports with dates before January 1st, 2026 (which are in BGN) have currency flagged as `BGN` and are automatically converted to EUR using the official fixed exchange rate of `1 EUR = 1.95583 BGN`.
+
 ## Core Data Model
 
 - **Account**: Bank accounts (current, credit card, virtual card, savings).

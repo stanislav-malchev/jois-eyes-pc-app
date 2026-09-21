@@ -6,6 +6,7 @@ use App\Entity\Transaction;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Action;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Actions;
 use EasyCorp\Bundle\EasyAdminBundle\Config\Crud;
+use EasyCorp\Bundle\EasyAdminBundle\Config\Filters;
 use EasyCorp\Bundle\EasyAdminBundle\Controller\AbstractCrudController;
 use EasyCorp\Bundle\EasyAdminBundle\Field\AssociationField;
 use EasyCorp\Bundle\EasyAdminBundle\Field\BooleanField;
@@ -42,6 +43,16 @@ class TransactionCrudController extends AbstractCrudController
             ->add(Crud::PAGE_DETAIL, $linkReceipt);
     }
 
+    public function configureFilters(Filters $filters): Filters
+    {
+        return $filters
+            ->add('date')
+            ->add('account')
+            ->add('currency')
+            ->add('softDeleted')
+            ->add('transactionType');
+    }
+
     public function configureFields(string $pageName): iterable
     {
         yield DateField::new('date');
@@ -49,7 +60,9 @@ class TransactionCrudController extends AbstractCrudController
         yield TextField::new('counterparty');
         yield NumberField::new('debitBgn');
         yield NumberField::new('creditBgn');
-        yield BooleanField::new('softDeleted');
+        yield TextField::new('currency');
+        yield NumberField::new('exchangeRate')->hideOnIndex();
+        yield BooleanField::new('softDeleted')->hideOnIndex()->hideOnDetail()->hideWhenCreating();
         yield AssociationField::new('account');
     }
 }

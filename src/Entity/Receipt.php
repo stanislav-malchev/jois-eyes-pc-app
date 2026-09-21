@@ -194,4 +194,9 @@ class Receipt
         $this->importedAt = $importedAt;
         return $this;
     }
+
+    public function __toString(): string
+    {
+        return $this->merchant ?? ($this->id?->toRfc4122() ?? '');
+    }
 }

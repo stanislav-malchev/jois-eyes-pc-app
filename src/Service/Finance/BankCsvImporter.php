@@ -65,7 +65,7 @@ class BankCsvImporter
             $stats['total']++;
 
             try {
-                $data = $this->mapRow($row, $headerMap);
+                $data = $this->mapRow($row, $headerMap, $filePath);
                 $fingerprint = $this->calculateFingerprint($data);
 
                 if ($this->exists($fingerprint, $account)) {
@@ -83,6 +83,8 @@ class BankCsvImporter
                 $transaction->setReference($data['reference']);
                 $transaction->setDebitBgn($data['debit']);
                 $transaction->setCreditBgn($data['credit']);
+                $transaction->setCurrency($data['currency']);
+                $transaction->setExchangeRate($data['exchange_rate']);
                 $transaction->setFingerprint($fingerprint);
                 $transaction->setSourceFile(basename($filePath));
 
@@ -107,7 +109,7 @@ class BankCsvImporter
         return $stats;
     }
 
-    private function mapRow(array $row, array $headerMap): array
+    private function mapRow(array $row, array $headerMap, string $filePath = ''): array
     {
         $get = function(string $key) use ($headerMap, $row) {
             // Try exact match first
@@ -131,19 +133,63 @@ class BankCsvImporter
             return null;
         };
 
-        $debit = $get('Дебит');
-        $credit = $get('Кредит');
-
-        // Normalize decimals (Bulgarian CSVs often use comma)
-        $debit = $debit ? str_replace(',', '.', $debit) : null;
-        $credit = $credit ? str_replace(',', '.', $credit) : null;
-
         // Parse date (Bulgarian format is often DD.MM.YYYY)
         $dateStr = $get('Дата');
         $date = \DateTimeImmutable::createFromFormat('d.m.Y', $dateStr);
         if (!$date) {
              // Fallback to generic parser
              $date = new \DateTimeImmutable($dateStr);
+        }
+
+        $isBefore2026 = $date < new \DateTimeImmutable('2026-01-01');
+
+        $currency = $isBefore2026 ? 'BGN' : 'EUR';
+        if (str_contains(basename($filePath), '2026')) {
+            $currency = 'EUR';
+        }
+        foreach ($headerMap as $header => $index) {
+            if (str_contains($header, 'EUR')) {
+                $currency = 'EUR';
+            }
+        }
+        $isEur = ($currency === 'EUR');
+
+        $exchangeRateStr = $get('Валутен курс');
+        $exchangeRateStr = $exchangeRateStr ? str_replace(',', '.', $exchangeRateStr) : null;
+        $exchangeRate = $exchangeRateStr ? (float)$exchangeRateStr : ($isBefore2026 ? 1.95583 : 1.0);
+
+        $debitKey = $isBefore2026 ? 'Дебит BGN' : ('Дебит ' . ($isEur ? 'EUR' : 'BGN'));
+        $creditKey = $isBefore2026 ? 'Кредит BGN' : ('Кредит ' . ($isEur ? 'EUR' : 'BGN'));
+
+        $debit = $get($debitKey);
+        if ($debit === null || $debit === '') {
+            $debit = $get('Дебит');
+        }
+        $credit = $get($creditKey);
+        if ($credit === null || $credit === '') {
+            $credit = $get('Кредит');
+        }
+
+        // Normalize decimals (Bulgarian CSVs often use comma)
+        $debit = $debit ? str_replace(',', '.', $debit) : null;
+        $credit = $credit ? str_replace(',', '.', $credit) : null;
+
+        // Convert to EUR: before Jan 1st 2026, values are in BGN, convert to EUR by dividing by exchangeRate (1.95583)
+        $debitEur = null;
+        if ($debit !== null && $debit !== '') {
+            if ($isBefore2026) {
+                $debitEur = number_format((float)$debit / $exchangeRate, 2, '.', '');
+            } else {
+                $debitEur = number_format((float)$debit * $exchangeRate, 2, '.', '');
+            }
+        }
+        $creditEur = null;
+        if ($credit !== null && $credit !== '') {
+            if ($isBefore2026) {
+                $creditEur = number_format((float)$credit / $exchangeRate, 2, '.', '');
+            } else {
+                $creditEur = number_format((float)$credit * $exchangeRate, 2, '.', '');
+            }
         }
 
         return [
@@ -153,8 +199,10 @@ class BankCsvImporter
             'counterparty_account' => $get('IBAN/Сметка на Наредител/Получател'),
             'transaction_type' => $get('Вид на трансакцията'),
             'reference' => $get('Свързваща референция'),
-            'debit' => $debit,
-            'credit' => $credit,
+            'debit' => $debitEur,
+            'currency' => $currency,
+            'exchange_rate' => number_format($exchangeRate, 6, '.', ''),
+            'credit' => $creditEur,
         ];
     }
 

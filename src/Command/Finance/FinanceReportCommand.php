@@ -48,15 +48,15 @@ class FinanceReportCommand extends Command
         $table = new Table($output);
         $table->setHeaders(['Metric', 'Value']);
         $table->addRows([
-            ['Total Credited (Income)', $report['income'] . ' BGN'],
-            ['Total Debited (Spending)', $report['spending'] . ' BGN'],
-            ['Internal Moves (Soft-deleted)', $report['internal_moves'] . ' BGN'],
-            ['Matched to Receipts', $report['matched_spending'] . ' BGN'],
-            ['Unmatched Spending', $report['unmatched_spending'] . ' BGN'],
+            ['Total Credited (Income)', $report['income'] . ' EUR'],
+            ['Total Debited (Spending)', $report['spending'] . ' EUR'],
+            ['Internal Moves (Soft-deleted)', $report['internal_moves'] . ' EUR'],
+            ['Matched to Receipts', $report['matched_spending'] . ' EUR'],
+            ['Unmatched Spending', $report['unmatched_spending'] . ' EUR'],
             ['Match Rate', $report['match_rate_percent'] . '%'],
             ['Products Identified', $report['product_count']],
             ['Total Items Purchased', $report['item_count']],
-            ['Cash Variance', $report['variance_bgn'] . ' BGN'],
+            ['Cash Variance', $report['variance_bgn'] . ' EUR'],
         ]);
         $table->render();
 

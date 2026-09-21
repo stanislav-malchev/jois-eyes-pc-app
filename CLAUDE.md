@@ -172,7 +172,7 @@ tailnet-only, single user.
   get committed). 500m haversine radius to absorb GPS drift.
 - `finance` — bank statement CSV imports (`import_csv`), review and reconciliation tools ("The Game"),
   unmatched/unprocessed receipts, product history/merging, and manual receipt
-  linking (see `docs/finance-feature.md`).
+  linking (see `docs/finance-feature.md`; default currency is **EUR** (not a flag), and pre-2026 CSV import values in BGN before Jan 1st 2026 have currency flagged as `BGN` and are automatically converted to EUR using the official fixed exchange rate of `1 EUR = 1.95583 BGN`).
 - Test tools from the CLI without a real MCP client:
   `php bin/console mcp:test-tool --list` /
   `php bin/console mcp:test-tool <name>`.

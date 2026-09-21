@@ -91,7 +91,8 @@ class BankCsvImporterTest extends TestCase
                     && $t->getDescription() === 'TEST DESC'
                     && $t->getCounterparty() === 'TEST COUNTERPARTY'
                     && $t->getCounterpartyAccount() === 'BG12STSA30000000000000'
-                    && $t->getDebitBgn() === '10.50';
+                    && $t->getCurrency() === 'BGN'
+                    && $t->getDebitBgn() === '5.37';
             }));
 
         $stats = $this->importer->import($tmpFile, $account);

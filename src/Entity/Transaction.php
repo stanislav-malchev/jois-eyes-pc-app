@@ -46,6 +46,12 @@ class Transaction
     #[ORM\Column(type: 'decimal', precision: 12, scale: 2, nullable: true)]
     private ?string $creditBgn = null;
 
+    #[ORM\Column(length: 10, nullable: true)]
+    private ?string $currency = 'EUR';
+
+    #[ORM\Column(type: 'decimal', precision: 12, scale: 6, nullable: true)]
+    private ?string $exchangeRate = null;
+
     #[ORM\Column(type: 'string', length: 64)]
     private ?string $fingerprint = null;
 
@@ -174,6 +180,28 @@ class Transaction
         return $this;
     }
 
+    public function getCurrency(): ?string
+    {
+        return $this->currency;
+    }
+
+    public function setCurrency(?string $currency): self
+    {
+        $this->currency = $currency;
+        return $this;
+    }
+
+    public function getExchangeRate(): ?string
+    {
+        return $this->exchangeRate;
+    }
+
+    public function setExchangeRate(?string $exchangeRate): self
+    {
+        $this->exchangeRate = $exchangeRate;
+        return $this;
+    }
+
     public function getFingerprint(): ?string
     {
         return $this->fingerprint;
@@ -238,5 +266,10 @@ class Transaction
     {
         $this->pairedWith = $pairedWith;
         return $this;
+    }
+
+    public function __toString(): string
+    {
+        return $this->description ?? ($this->id?->toRfc4122() ?? '');
     }
 }

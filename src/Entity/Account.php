@@ -19,6 +19,7 @@ class Account
     #[ORM\Column(length: 255)]
     private ?string $name = null;
 
+
     #[ORM\Column(length: 255, nullable: true)]
     private ?string $iban = null;
 
@@ -26,7 +27,7 @@ class Account
     private ?string $bank = null;
 
     #[ORM\Column(length: 10)]
-    private ?string $currency = 'BGN';
+    private ?string $currency = 'EUR';
 
     #[ORM\Column(length: 50)]
     private ?string $type = 'current';
@@ -46,6 +47,7 @@ class Account
         $this->name = $name;
         return $this;
     }
+
 
     public function getIban(): ?string
     {
@@ -89,5 +91,10 @@ class Account
     {
         $this->type = $type;
         return $this;
+    }
+
+    public function __toString(): string
+    {
+        return $this->name ?? '';
     }
 }

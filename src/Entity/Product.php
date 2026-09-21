@@ -163,4 +163,9 @@ class Product
     {
         return $this->lineItems;
     }
+
+    public function __toString(): string
+    {
+        return $this->name ?? '';
+    }
 }
